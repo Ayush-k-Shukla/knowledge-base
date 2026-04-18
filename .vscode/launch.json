@@ -1,0 +1,33 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug TypeScript",
+      "skipFiles": ["<node_internals>/**"],
+      "program": "${workspaceFolder}/src/server.ts",
+      "runtimeExecutable": "ts-node",
+      "env": {
+        "DEBUG": "true"
+      },
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug Compiled JS",
+      "skipFiles": ["<node_internals>/**"],
+      "program": "${workspaceFolder}/dist/server.js",
+      "preLaunchTask": "tsc: build - tsconfig.json",
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "env": {
+        "DEBUG": "true"
+      },
+      "console": "integratedTerminal"
+    }
+  ]
+}

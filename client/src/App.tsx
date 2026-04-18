@@ -10,7 +10,9 @@ import {
   Bot, 
   User,
   PlusCircle,
-  BrainCircuit
+  BrainCircuit,
+  Globe,
+  Link
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
@@ -28,6 +30,13 @@ interface Message {
 interface UploadedFile {
   name: string;
   status: 'uploading' | 'indexed';
+}
+
+interface IndexedWebsite {
+  url: string;
+  title: string;
+  pageCount: number;
+  status: 'crawling' | 'indexed';
 }
 
 const TypingIndicator = () => (
@@ -59,6 +68,9 @@ function App() {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isAsking, setIsAsking] = useState(false);
+  const [websites, setWebsites] = useState<IndexedWebsite[]>([]);
+  const [urlInput, setUrlInput] = useState('');
+  const [isCrawling, setIsCrawling] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -68,13 +80,23 @@ function App() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [docsRes, chatRes] = await Promise.all([
+        const [docsRes, chatRes, websitesRes] = await Promise.all([
           axios.get(`${API_BASE}/document`),
-          axios.get(`${API_BASE}/chat/history`)
+          axios.get(`${API_BASE}/chat/history`),
+          axios.get(`${API_BASE}/website`),
         ]);
 
         if (docsRes.data) {
           setFiles(docsRes.data.map((d: any) => ({ name: d.filename, status: 'indexed' })));
+        }
+
+        if (websitesRes.data) {
+          setWebsites(websitesRes.data.map((w: any) => ({
+            url: w.url,
+            title: w.title || w.url,
+            pageCount: w.pageCount,
+            status: 'indexed',
+          })));
         }
 
         if (chatRes.data && chatRes.data.length > 0) {
@@ -117,6 +139,42 @@ function App() {
       setIsUploading(false);
     }
   }, []);
+
+  const handleAddUrl = async () => {
+    const trimmed = urlInput.trim();
+    if (!trimmed || isCrawling) return;
+
+    try {
+      new URL(trimmed); // validate format client-side
+    } catch {
+      alert('Please enter a valid URL (include https://)');
+      return;
+    }
+
+    setIsCrawling(true);
+    setWebsites(prev => [
+      { url: trimmed, title: trimmed, pageCount: 0, status: 'crawling' },
+      ...prev.filter(w => w.url !== trimmed),
+    ]);
+    setUrlInput('');
+
+    try {
+      const res = await axios.post(`${API_BASE}/website/index`, { url: trimmed, depth: 1 });
+      setWebsites(prev =>
+        prev.map(w =>
+          w.url === trimmed
+            ? { url: trimmed, title: res.data.title, pageCount: res.data.pageCount, status: 'indexed' }
+            : w,
+        ),
+      );
+    } catch (error) {
+      console.error('Website indexing failed', error);
+      alert('Failed to index website. Check the URL and server logs.');
+      setWebsites(prev => prev.filter(w => w.url !== trimmed));
+    } finally {
+      setIsCrawling(false);
+    }
+  };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ 
     onDrop,
@@ -202,6 +260,99 @@ function App() {
           </div>
         </div>
 
+        {/* Website indexing section */}
+        <div className="upload-section" style={{ borderTop: '1px solid var(--surface-border)', paddingTop: '20px' }}>
+          <h2 style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '8px' }}>WEBSITES</h2>
+
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+            <div style={{ position: 'relative', flex: 1 }}>
+              <Link size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              <input
+                id="url-input"
+                type="url"
+                placeholder="https://example.com"
+                value={urlInput}
+                onChange={e => setUrlInput(e.target.value)}
+                onKeyPress={e => e.key === 'Enter' && handleAddUrl()}
+                disabled={isCrawling}
+                style={{
+                  width: '100%',
+                  background: 'var(--surface-1)',
+                  border: '1px solid var(--surface-border)',
+                  borderRadius: '8px',
+                  padding: '8px 10px 8px 30px',
+                  fontSize: '12px',
+                  color: 'var(--text-primary)',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+            <button
+              id="add-url-button"
+              onClick={handleAddUrl}
+              disabled={isCrawling || !urlInput.trim()}
+              style={{
+                background: isCrawling || !urlInput.trim() ? 'var(--surface-1)' : 'var(--accent-gradient)',
+                border: 'none',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                cursor: isCrawling || !urlInput.trim() ? 'not-allowed' : 'pointer',
+                color: 'white',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                fontSize: '12px',
+                fontWeight: 600,
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+              }}
+            >
+              {isCrawling ? <Loader2 size={14} className="animate-spin" /> : <Globe size={14} />}
+              {isCrawling ? 'Crawling' : 'Add'}
+            </button>
+          </div>
+
+          <div className="file-list">
+            {websites.map((site, idx) => (
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                key={idx}
+                className="file-item"
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                  <Globe size={16} className="text-gray-400" style={{ flexShrink: 0 }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{
+                      maxWidth: '140px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      fontSize: '13px',
+                    }}>
+                      {site.title !== site.url ? site.title : new URL(site.url).hostname}
+                    </div>
+                    {site.status === 'indexed' && site.pageCount > 0 && (
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                        {site.pageCount} page{site.pageCount !== 1 ? 's' : ''}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {site.status === 'crawling' ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-indigo-400 font-semibold italic">Crawling</span>
+                    <Loader2 size={14} className="animate-spin text-indigo-400" />
+                  </div>
+                ) : (
+                  <CheckCircle2 size={16} className="text-green-500" />
+                )}
+              </motion.div>
+            ))}
+          </div>
+        </div>
+
         <div style={{ padding: '24px', borderTop: '1px solid var(--surface-border)' }}>
           <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Powered by Gemini 1.5 & Pinecone</p>
         </div>
@@ -217,7 +368,9 @@ function App() {
             <div>
               <h2 style={{ fontSize: '16px', margin: 0 }}>AI Knowledge Assistant</h2>
               <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                {files.length > 0 ? `${files.length} documents indexed` : 'No documents indexed yet'}
+                {files.length > 0 || websites.length > 0
+                  ? `${files.length} doc${files.length !== 1 ? 's' : ''} · ${websites.length} site${websites.length !== 1 ? 's' : ''} indexed`
+                  : 'No sources indexed yet'}
               </p>
             </div>
           </div>

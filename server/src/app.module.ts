@@ -7,6 +7,7 @@ import { AiModule } from './ai/ai.module';
 import { VectorModule } from './vector/vector.module';
 import { DocumentModule } from './document/document.module';
 import { ChatModule } from './chat/chat.module';
+import { WebsiteModule } from './website/website.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { ChatModule } from './chat/chat.module';
     VectorModule,
     DocumentModule,
     ChatModule,
+    WebsiteModule,
   ],
   controllers: [AppController],
   providers: [AppService],

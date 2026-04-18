@@ -66,6 +66,7 @@ const TypingIndicator = () => (
   </div>
 );
 
+
 function App() {
   const [messages, setMessages] = useState<Message[]>([
     { id: '1', type: 'bot', text: 'Hello! I am your AI Knowledge Assistant. Upload a PDF or text document, and I will help you answer questions about it.' }
@@ -290,8 +291,6 @@ function App() {
           </div>
         </div>
 
-        {activeChatId && (
-        <>
         <div className="upload-section">
           <h2 style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '8px' }}>DOCUMENTS</h2>
 
@@ -432,9 +431,8 @@ function App() {
             ))}
           </div>
         </div>
-        </>)}
 
-        <div style={{ padding: '24px', borderTop: '1px solid var(--surface-border)' }}>
+        <div style={{ padding: '24px', borderTop: '1px solid var(--surface-border)', marginTop: 'auto' }}>
           <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Powered by Gemini 1.5 & Pinecone</p>
         </div>
       </aside>
@@ -497,12 +495,12 @@ function App() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-            disabled={isAsking}
+            disabled={isAsking || isUploading || isCrawling}
           />
           <button
             className="send-button"
             onClick={handleSend}
-            disabled={isAsking || !input.trim()}
+            disabled={isAsking || isUploading || isCrawling || !input.trim()}
           >
             {isAsking ? <Loader2 className="animate-spin" size={20} /> : <Send size={20} />}
           </button>

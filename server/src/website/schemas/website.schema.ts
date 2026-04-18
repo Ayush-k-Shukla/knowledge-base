@@ -1,11 +1,14 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 export type WebsiteDocument = WebsiteItem & Document;
 
 @Schema()
 export class WebsiteItem {
-  @Prop({ required: true, unique: true })
+  @Prop({ type: Types.ObjectId, ref: 'ChatSession', required: true })
+  chatId: Types.ObjectId;
+
+  @Prop({ required: true })
   url: string;
 
   @Prop({ default: '' })

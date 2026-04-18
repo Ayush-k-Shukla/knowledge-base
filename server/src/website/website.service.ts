@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import * as cheerio from 'cheerio';
+import { Model } from 'mongoose';
 import { AiService } from '../ai/ai.service';
 import { VectorService } from '../vector/vector.service';
 import { WebsiteDocument, WebsiteItem } from './schemas/website.schema';
@@ -21,9 +21,10 @@ export class WebsiteService {
    * chunk + embed all extracted text and upsert into Pinecone.
    */
   async indexWebsite(
+    chatId: string,
     startUrl: string,
     depth: number = 1,
-    maxPages: number = 15,
+    maxPages: number = 5,
   ): Promise<{ pageCount: number; title: string }> {
     const origin = new URL(startUrl).origin;
     const visited = new Set<string>();
@@ -61,7 +62,7 @@ export class WebsiteService {
 
           const embedding = await this.aiService.generateEmbedding(chunk);
           vectors.push({
-            id: `${encodeURIComponent(url)}-${i}`,
+            id: `${chatId}-${encodeURIComponent(url)}-${i}`,
             values: embedding,
             metadata: {
               text: chunk,
@@ -69,6 +70,7 @@ export class WebsiteService {
               pageUrl: url,
               chunkIndex: i,
               type: 'website',
+              chatId,
             },
           });
 
@@ -101,9 +103,10 @@ export class WebsiteService {
 
     // Persist to MongoDB
     await this.websiteModel.findOneAndUpdate(
-      { url: startUrl },
+      { url: startUrl, chatId },
       {
         url: startUrl,
+        chatId,
         title: siteTitle || startUrl,
         pageCount,
         indexedAt: new Date(),
@@ -114,8 +117,8 @@ export class WebsiteService {
     return { pageCount, title: siteTitle || startUrl };
   }
 
-  async findAll(): Promise<WebsiteItem[]> {
-    return this.websiteModel.find().sort({ indexedAt: -1 }).exec();
+  async findAll(chatId: string): Promise<WebsiteItem[]> {
+    return this.websiteModel.find({ chatId }).sort({ indexedAt: -1 }).exec();
   }
 
   // ---------------------------------------------------------------------------

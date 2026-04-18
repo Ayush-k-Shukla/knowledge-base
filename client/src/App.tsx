@@ -1,20 +1,20 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { useDropzone } from 'react-dropzone';
 import axios from 'axios';
-import { 
-  Send, 
-  FileText, 
-  UploadCloud, 
-  CheckCircle2, 
-  Loader2, 
-  Bot, 
-  User,
-  PlusCircle,
+import { AnimatePresence, motion } from 'framer-motion';
+import {
+  Bot,
   BrainCircuit,
+  CheckCircle2,
+  FileText,
   Globe,
-  Link
+  Link,
+  Loader2,
+  PlusCircle,
+  Send,
+  UploadCloud,
+  User
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useDropzone } from 'react-dropzone';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -39,19 +39,25 @@ interface IndexedWebsite {
   status: 'crawling' | 'indexed';
 }
 
+interface ChatSession {
+  _id: string;
+  title: string;
+  createdAt?: string;
+}
+
 const TypingIndicator = () => (
   <div className="typing-dots">
     {[0, 1, 2].map((i) => (
       <motion.div
         key={i}
         className="dot"
-        animate={{ 
+        animate={{
           opacity: [0.4, 1, 0.4],
-          scale: [1, 1.2, 1] 
+          scale: [1, 1.2, 1]
         }}
-        transition={{ 
-          duration: 1.2, 
-          repeat: Infinity, 
+        transition={{
+          duration: 1.2,
+          repeat: Infinity,
           delay: i * 0.2,
           ease: "easeInOut"
         }}
@@ -71,19 +77,55 @@ function App() {
   const [websites, setWebsites] = useState<IndexedWebsite[]>([]);
   const [urlInput, setUrlInput] = useState('');
   const [isCrawling, setIsCrawling] = useState(false);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  const fetchSessions = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/chat/sessions`);
+      if (res.data && res.data.length > 0) {
+        setChatSessions(res.data);
+        if (!activeChatId) {
+          setActiveChatId(res.data[0]._id);
+        }
+      } else {
+        handleNewChat();
+      }
+    } catch (error) {
+      console.error('Failed to fetch sessions', error);
+    }
+  }, [activeChatId]);
+
   useEffect(() => {
+    fetchSessions();
+  }, []);
+
+  const handleNewChat = async () => {
+    try {
+      const res = await axios.post(`${API_BASE}/chat/session`);
+      setChatSessions(prev => [res.data, ...prev]);
+      setActiveChatId(res.data._id);
+    } catch(e) { console.error('Failed to create session', e); }
+  };
+
+  useEffect(() => {
+    if (!activeChatId) return;
+
     const fetchData = async () => {
+      setFiles([]);
+      setWebsites([]);
+      setMessages([{ id: '1', type: 'bot', text: 'Hello! I am your AI Knowledge Assistant. Upload a PDF or text document, and I will help you answer questions about it.' }]);
+
       try {
         const [docsRes, chatRes, websitesRes] = await Promise.all([
-          axios.get(`${API_BASE}/document`),
-          axios.get(`${API_BASE}/chat/history`),
-          axios.get(`${API_BASE}/website`),
+          axios.get(`${API_BASE}/document/${activeChatId}`),
+          axios.get(`${API_BASE}/chat/history/${activeChatId}`),
+          axios.get(`${API_BASE}/website/${activeChatId}`),
         ]);
 
         if (docsRes.data) {
@@ -111,12 +153,14 @@ function App() {
       }
     };
     fetchData();
-  }, []);
+  }, [activeChatId]);
+
 
   useEffect(scrollToBottom, [messages]);
 
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    if (!activeChatId) return;
     const file = acceptedFiles[0];
     if (!file) return;
 
@@ -127,7 +171,7 @@ function App() {
     formData.append('file', file);
 
     try {
-      await axios.post(`${API_BASE}/document/upload`, formData, {
+      await axios.post(`${API_BASE}/document/upload/${activeChatId}`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       setFiles(prev => prev.map(f => f.name === file.name ? { ...f, status: 'indexed' } : f));
@@ -138,9 +182,10 @@ function App() {
     } finally {
       setIsUploading(false);
     }
-  }, []);
+  }, [activeChatId]);
 
   const handleAddUrl = async () => {
+    if (!activeChatId) return;
     const trimmed = urlInput.trim();
     if (!trimmed || isCrawling) return;
 
@@ -159,7 +204,7 @@ function App() {
     setUrlInput('');
 
     try {
-      const res = await axios.post(`${API_BASE}/website/index`, { url: trimmed, depth: 1 });
+      const res = await axios.post(`${API_BASE}/website/index/${activeChatId}`, { url: trimmed, depth: 1 });
       setWebsites(prev =>
         prev.map(w =>
           w.url === trimmed
@@ -176,14 +221,14 @@ function App() {
     }
   };
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ 
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: { 'application/pdf': ['.pdf'], 'text/plain': ['.txt'] },
     multiple: false
   });
 
   const handleSend = async () => {
-    if (!input.trim() || isAsking) return;
+    if (!input.trim() || isAsking || !activeChatId) return;
 
     const userMessage: Message = { id: Date.now().toString(), type: 'user', text: input };
     setMessages(prev => [...prev, userMessage]);
@@ -191,7 +236,7 @@ function App() {
     setIsAsking(true);
 
     try {
-      const response = await axios.post(`${API_BASE}/chat/ask`, { question: input });
+      const response = await axios.post(`${API_BASE}/chat/ask/${activeChatId}`, { question: input });
       const botMessage: Message = { id: (Date.now() + 1).toString(), type: 'bot', text: response.data.answer };
       setMessages(prev => [...prev, botMessage]);
     } catch (error) {
@@ -207,14 +252,49 @@ function App() {
     <div className="app-container">
       {/* Sidebar */}
       <aside className="sidebar glass">
-        <div className="logo-container">
-          <BrainCircuit className="text-indigo-400" size={32} />
-          <h1>Nexus RAG</h1>
+        <div className="logo-container" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <BrainCircuit className="text-indigo-400" size={32} />
+            <h1 style={{ fontSize: '18px', margin: 0 }}>Nexus RAG</h1>
+          </div>
+          <button
+            onClick={handleNewChat}
+            style={{ background: 'var(--accent-gradient)', border: 'none', borderRadius: '8px', padding: '6px 12px', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', fontWeight: 'bold' }}
+          >
+            <PlusCircle size={14} /> New Chat
+          </button>
         </div>
 
+        <div className="upload-section" style={{ borderBottom: '1px solid var(--surface-border)', paddingBottom: '12px' }}>
+          <h2 style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '8px' }}>CHATS</h2>
+          <div className="file-list" style={{ maxHeight: '150px', overflowY: 'auto' }}>
+            {chatSessions.map((session) => (
+              <div
+                key={session._id}
+                onClick={() => setActiveChatId(session._id)}
+                style={{
+                  padding: '8px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  background: activeChatId === session._id ? 'var(--surface-1)' : 'transparent',
+                  border: activeChatId === session._id ? '1px solid var(--surface-border)' : '1px solid transparent',
+                  display: 'flex', alignItems: 'center', gap: '8px'
+                }}
+              >
+                <Bot size={14} className="text-indigo-400" />
+                <span style={{ fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {session.title || 'New Chat'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {activeChatId && (
+        <>
         <div className="upload-section">
           <h2 style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '8px' }}>DOCUMENTS</h2>
-          
+
           <div {...getRootProps()} className="dropzone">
             <input {...getInputProps()} />
             {isUploading ? (
@@ -230,19 +310,19 @@ function App() {
 
           <div className="file-list">
             {files.map((file, idx) => (
-              <motion.div 
+              <motion.div
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
-                key={idx} 
+                key={idx}
                 className="file-item"
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <FileText size={16} className="text-gray-400" />
-                  <span style={{ 
-                    maxWidth: '150px', 
-                    overflow: 'hidden', 
-                    textOverflow: 'ellipsis', 
-                    whiteSpace: 'nowrap' 
+                  <span style={{
+                    maxWidth: '150px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
                   }}>
                     {file.name}
                   </span>
@@ -352,6 +432,7 @@ function App() {
             ))}
           </div>
         </div>
+        </>)}
 
         <div style={{ padding: '24px', borderTop: '1px solid var(--surface-border)' }}>
           <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Powered by Gemini 1.5 & Pinecone</p>
@@ -409,17 +490,17 @@ function App() {
         </section>
 
         <div className="input-container">
-          <input 
-            type="text" 
-            className="chat-input" 
+          <input
+            type="text"
+            className="chat-input"
             placeholder="Ask a question about your documents..."
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSend()}
             disabled={isAsking}
           />
-          <button 
-            className="send-button" 
+          <button
+            className="send-button"
             onClick={handleSend}
             disabled={isAsking || !input.trim()}
           >

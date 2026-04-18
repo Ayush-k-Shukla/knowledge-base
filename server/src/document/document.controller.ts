@@ -1,4 +1,4 @@
-import { Controller, Post, Get, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Controller, Get, Param, Post, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { DocumentService } from './document.service';
 
@@ -6,15 +6,15 @@ import { DocumentService } from './document.service';
 export class DocumentController {
   constructor(private readonly documentService: DocumentService) {}
 
-  @Post('upload')
+  @Post('upload/:chatId')
   @UseInterceptors(FileInterceptor('file'))
-  async uploadFile(@UploadedFile() file: Express.Multer.File) {
-    await this.documentService.processDocument(file);
+  async uploadFile(@Param('chatId') chatId: string, @UploadedFile() file: Express.Multer.File) {
+    await this.documentService.processDocument(chatId, file);
     return { message: 'File indexed successfully' };
   }
 
-  @Get()
-  async getDocuments() {
-    return this.documentService.findAll();
+  @Get(':chatId')
+  async getDocuments(@Param('chatId') chatId: string) {
+    return this.documentService.findAll(chatId);
   }
 }

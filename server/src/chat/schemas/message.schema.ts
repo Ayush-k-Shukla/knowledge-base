@@ -1,10 +1,13 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 export type MessageDocument = Message & Document;
 
 @Schema()
 export class Message {
+  @Prop({ type: Types.ObjectId, ref: 'ChatSession', required: true })
+  chatId: Types.ObjectId;
+
   @Prop({ required: true })
   role: 'user' | 'bot';
 

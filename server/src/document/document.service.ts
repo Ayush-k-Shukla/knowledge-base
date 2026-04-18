@@ -15,10 +15,16 @@ export class DocumentService {
     @InjectModel(DocumentItem.name) private documentModel: Model<DocumentDocument>,
   ) {}
 
-  async processDocument(file: Express.Multer.File): Promise<void> {
+  async processDocument(chatId: string, file: Express.Multer.File): Promise<void> {
     const dataBuffer = file.buffer;
-    const pdfData = await pdf(dataBuffer);
-    const text = pdfData.text;
+    let text = '';
+    
+    if (file.mimetype === 'application/pdf' || file.originalname.endsWith('.pdf')) {
+      const pdfData = await pdf(dataBuffer);
+      text = pdfData.text;
+    } else {
+      text = dataBuffer.toString('utf-8');
+    }
 
     // Simple chunking strategy
     const chunks = this.chunkText(text, 1000, 200);
@@ -28,12 +34,13 @@ export class DocumentService {
       const chunk = chunks[i];
       const embedding = await this.aiService.generateEmbedding(chunk);
       vectors.push({
-        id: `${file.originalname}-${i}`,
+        id: `${chatId}-${file.originalname}-${i}`,
         values: embedding,
         metadata: {
           text: chunk,
           source: file.originalname,
           chunkIndex: i,
+          chatId,
         },
       });
 
@@ -50,14 +57,14 @@ export class DocumentService {
 
     // Save metadata to MongoDB
     await this.documentModel.findOneAndUpdate(
-      { filename: file.originalname },
-      { filename: file.originalname, uploadedAt: new Date() },
+      { filename: file.originalname, chatId },
+      { filename: file.originalname, chatId, uploadedAt: new Date() },
       { upsert: true, new: true },
     );
   }
 
-  async findAll(): Promise<DocumentItem[]> {
-    return this.documentModel.find().sort({ uploadedAt: -1 }).exec();
+  async findAll(chatId: string): Promise<DocumentItem[]> {
+    return this.documentModel.find({ chatId }).sort({ uploadedAt: -1 }).exec();
   }
 
   private chunkText(text: string, size: number, overlap: number): string[] {

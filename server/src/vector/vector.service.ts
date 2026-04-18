@@ -24,11 +24,12 @@ export class VectorService implements OnModuleInit {
     await index.upsert({ records: vectors });
   }
 
-  async query(vector: number[], topK: number = 5) {
+  async query(vector: number[], topK: number = 5, filter?: Record<string, any>) {
     const index = this.pinecone.Index(this.indexName);
     const result = await index.query({
       vector,
       topK,
+      filter,
       includeMetadata: true,
     });
     return result.matches;

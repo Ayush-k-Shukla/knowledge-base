@@ -5,10 +5,14 @@ import { ChatService } from './chat.service';
 import { AiModule } from '../ai/ai.module';
 import { VectorModule } from '../vector/vector.module';
 import { Message, MessageSchema } from './schemas/message.schema';
+import { ChatSession, ChatSessionSchema } from './schemas/chat-session.schema';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Message.name, schema: MessageSchema }]),
+    MongooseModule.forFeature([
+      { name: Message.name, schema: MessageSchema },
+      { name: ChatSession.name, schema: ChatSessionSchema }
+    ]),
     AiModule,
     VectorModule,
   ],

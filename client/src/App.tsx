@@ -13,6 +13,9 @@ import {
   BrainCircuit
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
 
 const API_BASE = 'http://localhost:3001';
 
@@ -26,6 +29,27 @@ interface UploadedFile {
   name: string;
   status: 'uploading' | 'indexed';
 }
+
+const TypingIndicator = () => (
+  <div className="typing-dots">
+    {[0, 1, 2].map((i) => (
+      <motion.div
+        key={i}
+        className="dot"
+        animate={{ 
+          opacity: [0.4, 1, 0.4],
+          scale: [1, 1.2, 1] 
+        }}
+        transition={{ 
+          duration: 1.2, 
+          repeat: Infinity, 
+          delay: i * 0.2,
+          ease: "easeInOut"
+        }}
+      />
+    ))}
+  </div>
+);
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([
@@ -136,7 +160,10 @@ function App() {
           <div {...getRootProps()} className="dropzone">
             <input {...getInputProps()} />
             {isUploading ? (
-              <Loader2 className="animate-spin text-indigo-400" size={32} />
+              <div className="flex flex-col items-center gap-2">
+                <Loader2 className="animate-spin text-indigo-400" size={32} />
+                <span className="text-[10px] text-indigo-300 font-medium tracking-wider uppercase">Indexing...</span>
+              </div>
             ) : (
               <UploadCloud className={isDragActive ? 'text-indigo-400' : 'text-gray-400'} size={32} />
             )}
@@ -163,7 +190,10 @@ function App() {
                   </span>
                 </div>
                 {file.status === 'uploading' ? (
-                  <Loader2 size={16} className="animate-spin text-indigo-400" />
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-indigo-400 font-semibold italic">Indexing</span>
+                    <Loader2 size={14} className="animate-spin text-indigo-400" />
+                  </div>
                 ) : (
                   <CheckCircle2 size={16} className="text-green-500" />
                 )}
@@ -205,7 +235,11 @@ function App() {
               >
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
                   {m.type === 'bot' ? <Bot size={18} style={{ marginTop: '4px' }} /> : <User size={18} style={{ marginTop: '4px' }} />}
-                  <span>{m.text}</span>
+                  <div className="markdown-container">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {m.text}
+                    </ReactMarkdown>
+                  </div>
                 </div>
               </motion.div>
             ))}
@@ -213,8 +247,8 @@ function App() {
           {isAsking && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="message bot">
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <Loader2 className="animate-spin" size={18} />
-                <span>Thinking...</span>
+                <Bot size={18} />
+                <TypingIndicator />
               </div>
             </motion.div>
           )}

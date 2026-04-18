@@ -125,6 +125,57 @@ body {
   animation: slideIn 0.3s ease-out;
 }
 
+/* Markdown Support in Bot Messages */
+.message.bot div {
+  width: 100%;
+}
+
+.message.bot p {
+  margin-bottom: 12px;
+}
+
+.message.bot p:last-child {
+  margin-bottom: 0;
+}
+
+.message.bot ul, .message.bot ol {
+  margin-bottom: 12px;
+  padding-left: 20px;
+}
+
+.message.bot li {
+  margin-bottom: 4px;
+}
+
+.message.bot strong {
+  color: #b388ff;
+  font-weight: 600;
+}
+
+.message.bot code {
+  background: rgba(124, 77, 255, 0.15);
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.9em;
+  color: #d1c4e9;
+}
+
+.message.bot pre {
+  background: #1a1b26;
+  padding: 16px;
+  border-radius: 12px;
+  overflow-x: auto;
+  margin: 12px 0;
+  border: 1px solid var(--surface-border);
+}
+
+.message.bot pre code {
+  background: transparent;
+  padding: 0;
+  color: #a9b1d6;
+}
+
 .message.user {
   align-self: flex-end;
   background: var(--accent-gradient);
@@ -141,9 +192,56 @@ body {
   border-bottom-left-radius: 4px;
 }
 
+/* Typing Indicator Animation */
+.typing-dots {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  width: fit-content;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  background: var(--accent-color);
+  border-radius: 50%;
+  opacity: 0.4;
+}
+
 @keyframes slideIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* Shimmer effect for indexing */
+.indexing-shimmer {
+  position: relative;
+  overflow: hidden;
+  background: rgba(124, 77, 255, 0.05);
+}
+
+.indexing-shimmer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(124, 77, 255, 0.1),
+    transparent
+  );
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  100% {
+    left: 200%;
+  }
 }
 
 /* Input Area */

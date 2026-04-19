@@ -297,9 +297,9 @@ function App() {
           <div {...getRootProps()} className="dropzone">
             <input {...getInputProps()} />
             {isUploading ? (
-              <div className="flex flex-col items-center gap-2">
-                <Loader2 className="animate-spin text-indigo-400" size={32} />
-                <span className="text-[10px] text-indigo-300 font-medium tracking-wider uppercase">Indexing...</span>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                <Loader2 className="animate-spin" size={32} color="#818cf8" />
+                <span style={{ fontSize: '10px', color: '#a5b4fc', fontWeight: 500, letterSpacing: '0.05em', textTransform: 'uppercase' }}>Indexing...</span>
               </div>
             ) : (
               <UploadCloud className={isDragActive ? 'text-indigo-400' : 'text-gray-400'} size={32} />
@@ -327,9 +327,9 @@ function App() {
                   </span>
                 </div>
                 {file.status === 'uploading' ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-indigo-400 font-semibold italic">Indexing</span>
-                    <Loader2 size={14} className="animate-spin text-indigo-400" />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '10px', color: '#818cf8', fontWeight: 600, fontStyle: 'italic' }}>Indexing</span>
+                    <Loader2 size={14} className="animate-spin" color="#818cf8" />
                   </div>
                 ) : (
                   <CheckCircle2 size={16} className="text-green-500" />
@@ -420,9 +420,9 @@ function App() {
                   </div>
                 </div>
                 {site.status === 'crawling' ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-indigo-400 font-semibold italic">Crawling</span>
-                    <Loader2 size={14} className="animate-spin text-indigo-400" />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '10px', color: '#818cf8', fontWeight: 600, fontStyle: 'italic' }}>Crawling</span>
+                    <Loader2 size={14} className="animate-spin" color="#818cf8" />
                   </div>
                 ) : (
                   <CheckCircle2 size={16} className="text-green-500" />
@@ -491,16 +491,16 @@ function App() {
           <input
             type="text"
             className="chat-input"
-            placeholder="Ask a question about your documents..."
+            placeholder={(files.length > 0 || websites.length > 0) ? "Ask a question about your documents..." : "Index a document or link to ask a question..."}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-            disabled={isAsking || isUploading || isCrawling}
+            disabled={isAsking || isUploading || isCrawling || (files.length === 0 && websites.length === 0)}
           />
           <button
             className="send-button"
             onClick={handleSend}
-            disabled={isAsking || isUploading || isCrawling || !input.trim()}
+            disabled={isAsking || isUploading || isCrawling || (files.length === 0 && websites.length === 0) || !input.trim()}
           >
             {isAsking ? <Loader2 className="animate-spin" size={20} /> : <Send size={20} />}
           </button>

@@ -34,4 +34,9 @@ export class VectorService implements OnModuleInit {
     });
     return result.matches;
   }
+
+  async deleteByChatId(chatId: string) {
+    const index = this.pinecone.Index(this.indexName);
+    await index.deleteMany({ filter: { chatId } });
+  }
 }

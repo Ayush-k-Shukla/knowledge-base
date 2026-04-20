@@ -1,8 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import * as cheerio from 'cheerio';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { AiService } from '../ai/ai.service';
+import {
+  ChatSession,
+  ChatSessionDocument,
+} from '../chat/schemas/chat-session.schema';
 import { VectorService } from '../vector/vector.service';
 import { WebsiteDocument, WebsiteItem } from './schemas/website.schema';
 
@@ -14,6 +18,8 @@ export class WebsiteService {
     private aiService: AiService,
     private vectorService: VectorService,
     @InjectModel(WebsiteItem.name) private websiteModel: Model<WebsiteDocument>,
+    @InjectModel(ChatSession.name)
+    private chatSessionModel: Model<ChatSessionDocument>,
   ) {}
 
   /**
@@ -25,7 +31,12 @@ export class WebsiteService {
     startUrl: string,
     depth: number = 1,
     maxPages: number = 5,
+    userId?: string,
   ): Promise<{ pageCount: number; title: string }> {
+    if (userId) {
+      await this.ensureOwnership(chatId, userId);
+    }
+
     const origin = new URL(startUrl).origin;
     const visited = new Set<string>();
     const queue: Array<{ url: string; level: number }> = [
@@ -38,7 +49,9 @@ export class WebsiteService {
     while (queue.length > 0) {
       // Stop once we've hit the page cap
       if (pageCount >= maxPages) {
-        this.logger.log(`Reached maxPages limit (${maxPages}). Stopping crawl.`);
+        this.logger.log(
+          `Reached maxPages limit (${maxPages}). Stopping crawl.`,
+        );
         break;
       }
 
@@ -91,7 +104,11 @@ export class WebsiteService {
         // Enqueue same-origin links if we haven't hit the depth limit
         if (level < depth) {
           for (const link of links) {
-            if (!visited.has(link) && link.startsWith(origin) && this.isContentUrl(link)) {
+            if (
+              !visited.has(link) &&
+              link.startsWith(origin) &&
+              this.isContentUrl(link)
+            ) {
               queue.push({ url: link, level: level + 1 });
             }
           }
@@ -103,10 +120,10 @@ export class WebsiteService {
 
     // Persist to MongoDB
     await this.websiteModel.findOneAndUpdate(
-      { url: startUrl, chatId },
+      { url: startUrl, chatId: new Types.ObjectId(chatId) },
       {
         url: startUrl,
-        chatId,
+        chatId: new Types.ObjectId(chatId),
         title: siteTitle || startUrl,
         pageCount,
         indexedAt: new Date(),
@@ -117,8 +134,23 @@ export class WebsiteService {
     return { pageCount, title: siteTitle || startUrl };
   }
 
-  async findAll(chatId: string): Promise<WebsiteItem[]> {
-    return this.websiteModel.find({ chatId }).sort({ indexedAt: -1 }).exec();
+  async findAll(chatId: string, userId: string): Promise<WebsiteItem[]> {
+    await this.ensureOwnership(chatId, userId);
+    return this.websiteModel
+      .find({ chatId: new Types.ObjectId(chatId) })
+      .sort({ indexedAt: -1 })
+      .exec();
+  }
+
+  private async ensureOwnership(chatId: string, userId: string) {
+    const session = await this.chatSessionModel.findOne({
+      _id: new Types.ObjectId(chatId),
+      userId: new Types.ObjectId(userId),
+    });
+
+    if (!session) {
+      throw new NotFoundException('Chat session not found');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -189,7 +221,8 @@ export class WebsiteService {
       const search = parsed.search;
 
       // Skip URLs with non-content query params (e.g. ?action=edit)
-      if (search && /action=(edit|history|raw|submit|preview)/.test(search)) return false;
+      if (search && /action=(edit|history|raw|submit|preview)/.test(search))
+        return false;
 
       // Skip MediaWiki/Wikipedia special namespaces
       const skipPatterns = [

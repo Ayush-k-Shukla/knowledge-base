@@ -1,14 +1,21 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { DocumentService } from './document.service';
-import { DocumentController } from './document.controller';
 import { AiModule } from '../ai/ai.module';
+import {
+  ChatSession,
+  ChatSessionSchema,
+} from '../chat/schemas/chat-session.schema';
 import { VectorModule } from '../vector/vector.module';
+import { DocumentController } from './document.controller';
+import { DocumentService } from './document.service';
 import { DocumentItem, DocumentSchema } from './schemas/document.schema';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: DocumentItem.name, schema: DocumentSchema }]),
+    MongooseModule.forFeature([
+      { name: DocumentItem.name, schema: DocumentSchema },
+      { name: ChatSession.name, schema: ChatSessionSchema },
+    ]),
     AiModule,
     VectorModule,
   ],
@@ -16,4 +23,3 @@ import { DocumentItem, DocumentSchema } from './schemas/document.schema';
   controllers: [DocumentController],
 })
 export class DocumentModule {}
-

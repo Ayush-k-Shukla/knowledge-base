@@ -1,7 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { AiService } from '../ai/ai.service';
+import {
+  ChatSession,
+  ChatSessionDocument,
+} from '../chat/schemas/chat-session.schema';
 import { VectorService } from '../vector/vector.service';
 import { DocumentDocument, DocumentItem } from './schemas/document.schema';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -12,14 +16,26 @@ export class DocumentService {
   constructor(
     private aiService: AiService,
     private vectorService: VectorService,
-    @InjectModel(DocumentItem.name) private documentModel: Model<DocumentDocument>,
+    @InjectModel(DocumentItem.name)
+    private documentModel: Model<DocumentDocument>,
+    @InjectModel(ChatSession.name)
+    private chatSessionModel: Model<ChatSessionDocument>,
   ) {}
 
-  async processDocument(chatId: string, file: Express.Multer.File): Promise<void> {
+  async processDocument(
+    chatId: string,
+    file: Express.Multer.File,
+    userId: string,
+  ): Promise<void> {
+    await this.ensureOwnership(chatId, userId);
+
     const dataBuffer = file.buffer;
     let text = '';
-    
-    if (file.mimetype === 'application/pdf' || file.originalname.endsWith('.pdf')) {
+
+    if (
+      file.mimetype === 'application/pdf' ||
+      file.originalname.endsWith('.pdf')
+    ) {
       const pdfData = await pdf(dataBuffer);
       text = pdfData.text;
     } else {
@@ -57,14 +73,33 @@ export class DocumentService {
 
     // Save metadata to MongoDB
     await this.documentModel.findOneAndUpdate(
-      { filename: file.originalname, chatId },
-      { filename: file.originalname, chatId, uploadedAt: new Date() },
+      { filename: file.originalname, chatId: new Types.ObjectId(chatId) },
+      {
+        filename: file.originalname,
+        chatId: new Types.ObjectId(chatId),
+        uploadedAt: new Date(),
+      },
       { upsert: true, new: true },
     );
   }
 
-  async findAll(chatId: string): Promise<DocumentItem[]> {
-    return this.documentModel.find({ chatId }).sort({ uploadedAt: -1 }).exec();
+  async findAll(chatId: string, userId: string): Promise<DocumentItem[]> {
+    await this.ensureOwnership(chatId, userId);
+    return this.documentModel
+      .find({ chatId: new Types.ObjectId(chatId) })
+      .sort({ uploadedAt: -1 })
+      .exec();
+  }
+
+  private async ensureOwnership(chatId: string, userId: string) {
+    const session = await this.chatSessionModel.findOne({
+      _id: new Types.ObjectId(chatId),
+      userId: new Types.ObjectId(userId),
+    });
+
+    if (!session) {
+      throw new NotFoundException('Chat session not found');
+    }
   }
 
   private chunkText(text: string, size: number, overlap: number): string[] {
@@ -78,4 +113,3 @@ export class DocumentService {
     return chunks;
   }
 }
-

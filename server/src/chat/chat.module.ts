@@ -1,22 +1,30 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { AiModule } from '../ai/ai.module';
+import {
+  DocumentItem,
+  DocumentSchema,
+} from '../document/schemas/document.schema';
+import { VectorModule } from '../vector/vector.module';
+import { WebsiteItem, WebsiteSchema } from '../website/schemas/website.schema';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
-import { AiModule } from '../ai/ai.module';
-import { VectorModule } from '../vector/vector.module';
-import { Message, MessageSchema } from './schemas/message.schema';
 import { ChatSession, ChatSessionSchema } from './schemas/chat-session.schema';
+import { Message, MessageSchema } from './schemas/message.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Message.name, schema: MessageSchema },
-      { name: ChatSession.name, schema: ChatSessionSchema }
+      { name: ChatSession.name, schema: ChatSessionSchema },
+      { name: DocumentItem.name, schema: DocumentSchema },
+      { name: WebsiteItem.name, schema: WebsiteSchema },
     ]),
     AiModule,
     VectorModule,
   ],
   controllers: [ChatController],
   providers: [ChatService],
+  exports: [ChatService],
 })
 export class ChatModule {}

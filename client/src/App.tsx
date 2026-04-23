@@ -205,6 +205,67 @@ function App() {
     setMessages([defaultMessage]);
   }, [defaultMessage]);
 
+  const parseSources = (sourcesText: string) => {
+    const lines = sourcesText.split(/\r?\n/);
+    const rawSources: Array<{ sourceId: string; sentences: string[] }> = [];
+    let currentSource: { sourceId: string; sentences: string[] } | null = null;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      const sourceMatch = line.match(/^\d+\.\s*\[(.+?)\]$/);
+      const sentenceMatch = line.match(/^[-*]\s+(.+)$/);
+
+      if (sourceMatch) {
+        if (currentSource) {
+          rawSources.push(currentSource);
+        }
+        currentSource = {
+          sourceId: sourceMatch[1],
+          sentences: [],
+        };
+      } else if (sentenceMatch && currentSource) {
+        currentSource.sentences.push(sentenceMatch[1]);
+      } else if (currentSource) {
+        currentSource.sentences.push(line);
+      }
+    }
+
+    if (currentSource) {
+      rawSources.push(currentSource);
+    }
+
+    return rawSources.map((source, index) => ({
+      ...source,
+      marker: `[${index + 1}]`,
+      snippet: source.sentences[0] || '',
+    }));
+  };
+
+  const parseBotMessage = (text: string) => {
+    const splitIndex = text.indexOf('\n### Sources\n');
+    if (splitIndex === -1) {
+      return {
+        mainText: text,
+        sources: [] as Array<{
+          sourceId: string;
+          sentences: string[];
+          marker: string;
+          snippet: string;
+        }>,
+      };
+    }
+
+    const mainText = text.slice(0, splitIndex).trim();
+    const sourcesText = text.slice(splitIndex + '\n### Sources\n'.length);
+
+    return {
+      mainText: mainText || text,
+      sources: parseSources(sourcesText),
+    };
+  };
+
   const logout = useCallback(() => {
     localStorage.removeItem('jwt_token');
     setToken(null);
@@ -943,9 +1004,63 @@ function App() {
                     <User size={18} style={{ marginTop: '4px' }} />
                   )}
                   <div className='markdown-container'>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {m.text}
-                    </ReactMarkdown>
+                    {m.type === 'bot' ? (
+                      (() => {
+                        const { mainText, sources } = parseBotMessage(m.text);
+                        const sourceIndex = Object.fromEntries(
+                          sources.map((source) => [source.marker, source]),
+                        );
+
+                        return (
+                          <>
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                p: ({ children, ...props }) => {
+                                  const processText = (text: any): any => {
+                                    if (typeof text === 'string') {
+                                      const parts = text.split(/(\[[0-9]+\])/g);
+                                      return parts.map((part, index) => {
+                                        if (part.match(/^\[[0-9]+\]$/)) {
+                                          const source = sourceIndex[part];
+                                          return (
+                                            <span
+                                              key={index}
+                                              className='citation'
+                                              data-tooltip={
+                                                source?.snippet || ''
+                                              }
+                                            >
+                                              {part}
+                                            </span>
+                                          );
+                                        }
+                                        return part;
+                                      });
+                                    }
+                                    return text;
+                                  };
+
+                                  return (
+                                    <p {...props}>
+                                      {Array.isArray(children)
+                                        ? children.map(processText)
+                                        : processText(children)}
+                                    </p>
+                                  );
+                                },
+                              }}
+                            >
+                              {mainText}
+                            </ReactMarkdown>
+                          </>
+                        );
+                      })()
+                    ) : (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {m.text}
+                      </ReactMarkdown>
+                    )}
                   </div>
                 </div>
               </motion.div>

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AiService, AnswerWithCitations } from '../ai/ai.service';
@@ -19,6 +19,8 @@ import { Message, MessageDocument } from './schemas/message.schema';
 
 @Injectable()
 export class ChatService {
+  private readonly logger = new Logger(ChatService.name);
+
   constructor(
     private aiService: AiService,
     private vectorService: VectorService,
@@ -48,9 +50,11 @@ export class ChatService {
     question: string,
     userId: string,
   ): Promise<string> {
+    this.logger.log(`[Chat ${chatId}] Processing question: "${question}"`);
     await this.ensureOwnership(chatId, userId);
 
     // 1. Save user question
+    this.logger.debug(`[Chat ${chatId}] Step 1: Saving user question`);
     await new this.messageModel({
       chatId: new Types.ObjectId(chatId),
       role: 'user',
@@ -58,9 +62,11 @@ export class ChatService {
     }).save();
 
     // 2. Query Rewriting Layer: Rewrite query into 3 optimized queries
+    this.logger.debug(`[Chat ${chatId}] Step 2: Rewriting query`);
     const queryRewrite = await this.aiService.rewriteQuery(question);
 
     // 3. Run vector search for all 3 rewritten queries
+    this.logger.debug(`[Chat ${chatId}] Step 3: Running vector search`);
     const allMatches = [];
     for (const rewrittenQuery of queryRewrite.rewrittenQueries) {
       const queryEmbedding =
@@ -72,11 +78,19 @@ export class ChatService {
     }
 
     // 4. Merge and deduplicate results based on chunk ID
+    this.logger.debug(`[Chat ${chatId}] Step 4: Merging and deduplicating matches`);
     const uniqueMatches = this.mergeAndDeduplicateMatches(allMatches);
 
+    // 4.5. Re-rank the deduplicated matches using Cohere
+    this.logger.debug(`[Chat ${chatId}] Step 4.5: Re-ranking ${uniqueMatches.length} matches with Cohere`);
+    const rerankedMatches = await this.aiService.rerankChunks(
+      question,
+      uniqueMatches,
+    );
+
     // 5. Prepare context chunks with IDs for citation
-    const contextChunks = uniqueMatches
-      .slice(0, 10)
+    this.logger.debug(`[Chat ${chatId}] Step 5: Preparing context chunks`);
+    const contextChunks = rerankedMatches
       .map((match, index) => ({
         id: match.id || `chunk_${index}`,
         sourceId:
@@ -86,20 +100,24 @@ export class ChatService {
       .filter((chunk) => chunk.text);
 
     // 6. Generate answer with citations
+    this.logger.debug(`[Chat ${chatId}] Step 6: Generating answer with citations`);
     const answerWithCitations =
       await this.aiService.generateAnswerWithCitations(question, contextChunks);
 
     // 7. Format the final answer with citations and snippets
+    this.logger.debug(`[Chat ${chatId}] Step 7: Formatting final answer`);
     const formattedAnswer =
       this.formatAnswerWithCitationsAndSnippets(answerWithCitations);
 
     // 8. Save bot answer
+    this.logger.debug(`[Chat ${chatId}] Step 8: Saving bot answer`);
     await new this.messageModel({
       chatId: new Types.ObjectId(chatId),
       role: 'bot',
       content: formattedAnswer,
     }).save();
 
+    this.logger.log(`[Chat ${chatId}] Request completed successfully`);
     return formattedAnswer;
   }
 

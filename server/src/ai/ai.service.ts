@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { CohereClientV2 } from 'cohere-ai';
 
 export interface QueryRewrite {
   originalQuery: string;
@@ -22,10 +23,16 @@ export interface AnswerWithCitations {
 @Injectable()
 export class AiService {
   private genAI: GoogleGenerativeAI;
+  private cohere: CohereClientV2;
 
   constructor(private configService: ConfigService) {
     const apiKey = this.configService.get<string>('GEMINI_API_KEY')!;
     this.genAI = new GoogleGenerativeAI(apiKey);
+
+    const cohereApiKey = this.configService.get<string>('COHERE_API_KEY');
+    if (cohereApiKey) {
+      this.cohere = new CohereClientV2({ token: cohereApiKey });
+    }
   }
 
   async generateEmbedding(text: string): Promise<number[]> {
@@ -76,6 +83,37 @@ export class AiService {
           `Explain ${query} in detail`,
         ],
       };
+    }
+  }
+
+  async rerankChunks(query: string, chunks: any[]): Promise<any[]> {
+    if (!this.cohere) {
+      console.warn('Cohere client not initialized. Skipping reranking.');
+      return chunks;
+    }
+
+    if (!chunks || chunks.length === 0) return [];
+
+    const documents = chunks.map((chunk) => chunk.metadata?.text || '');
+
+    try {
+      const response = await this.cohere.rerank({
+        model: 'rerank-english-v3.0',
+        query: query,
+        documents: documents,
+        topN: 10,
+      });
+
+      const rerankedChunks = [];
+      for (const result of response.results) {
+        const chunk = chunks[result.index];
+        chunk.score = result.relevanceScore; // Set the new score from Cohere
+        rerankedChunks.push(chunk);
+      }
+      return rerankedChunks;
+    } catch (error) {
+      console.error('Cohere rerank error:', error);
+      return chunks; // fallback to original order
     }
   }
 

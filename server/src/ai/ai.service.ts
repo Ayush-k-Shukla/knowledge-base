@@ -2,6 +2,8 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CohereClientV2 } from 'cohere-ai';
+import * as cheerio from 'cheerio';
+
 
 export interface QueryRewrite {
   originalQuery: string;
@@ -249,4 +251,81 @@ export class AiService {
     const result = await model.generateContent(fullPrompt);
     return result.response.text();
   }
+
+  async evaluateContext(question: string, contextChunks: any[]): Promise<{ action: 'ANSWER' | 'ASK_CLARIFICATION' | 'WEB_SEARCH', reasoning: string, message?: string }> {
+    const model = this.genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash-lite',
+      generationConfig: { responseMimeType: "application/json" }
+    });
+
+    const contextWithIds = contextChunks
+      .map((chunk, index) => `[Chunk ${index}]\n${chunk.text}`)
+      .join('\n\n---\n\n');
+
+    const prompt = `
+      You are an Agentic Routing Engine for a question-answering bot.
+      Your job is to evaluate if the provided context is sufficient to answer the user's question.
+
+      Rules for Action:
+      - "ANSWER": The context has enough information to provide a solid answer.
+      - "ASK_CLARIFICATION": The question is ambiguous, unclear, or contradictory. You need the user to clarify. Provide the clarifying question in the "message" field.
+      - "WEB_SEARCH": The question requires external knowledge, current events, or facts not present in the context. Provide the optimal search query in the "message" field.
+
+      CONTEXT:
+      ${contextWithIds}
+
+      QUESTION: ${question}
+
+      Output MUST be valid JSON matching this schema:
+      {
+        "action": "ANSWER" | "ASK_CLARIFICATION" | "WEB_SEARCH",
+        "reasoning": "Explanation of why this action was chosen",
+        "message": "Clarifying question (if ASK_CLARIFICATION) OR Search query (if WEB_SEARCH)"
+      }
+    `;
+
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text();
+    try {
+      return JSON.parse(responseText);
+    } catch (e) {
+      console.error('Failed to parse evaluation JSON', e);
+      return { action: 'ANSWER', reasoning: 'Fallback due to parse error' };
+    }
+  }
+
+  async performWebSearch(query: string): Promise<string> {
+    try {
+      const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+      });
+      
+      const html = await response.text();
+      const $ = cheerio.load(html);
+      
+      let searchContext = 'WEB SEARCH RESULTS:\n';
+      let count = 0;
+      
+      $('.result').slice(0, 5).each((i, el) => {
+        const title = $(el).find('.result__title').text().trim();
+        const snippet = $(el).find('.result__snippet').text().trim();
+        if (title && snippet) {
+          searchContext += `\n[Source: Web_${count}] ${title}\n${snippet}\n`;
+          count++;
+        }
+      });
+      
+      if (count === 0) {
+        return '';
+      }
+      
+      return searchContext;
+    } catch (error) {
+      console.error('Web search error:', error);
+      return '';
+    }
+  }
 }
+

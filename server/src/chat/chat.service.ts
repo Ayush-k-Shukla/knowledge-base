@@ -99,6 +99,38 @@ export class ChatService {
       }))
       .filter((chunk) => chunk.text);
 
+    // 5.5. Agentic Routing Layer
+    this.logger.debug(`[Chat ${chatId}] Step 5.5: Evaluating context sufficiency (Agentic Routing)`);
+    const evaluation = await this.aiService.evaluateContext(question, contextChunks);
+    this.logger.log(`[Chat ${chatId}] Routing Action: ${evaluation.action} - ${evaluation.reasoning}`);
+
+    if (evaluation.action === 'ASK_CLARIFICATION') {
+      this.logger.debug(`[Chat ${chatId}] Asking for clarification: ${evaluation.message}`);
+      const botResponse = evaluation.message || 'Could you please clarify your question?';
+      await new this.messageModel({
+        chatId: new Types.ObjectId(chatId),
+        role: 'bot',
+        content: botResponse,
+      }).save();
+      return botResponse;
+    }
+
+    if (evaluation.action === 'WEB_SEARCH') {
+      this.logger.debug(`[Chat ${chatId}] Performing web search for: ${evaluation.message}`);
+      const searchQuery = evaluation.message || question;
+      const webResults = await this.aiService.performWebSearch(searchQuery);
+      
+      // We append web results as a pseudo-chunk
+      if (webResults) {
+        contextChunks.push({
+          id: 'web_search',
+          sourceId: 'web',
+          text: webResults,
+        });
+        this.logger.debug(`[Chat ${chatId}] Appended web search results to context`);
+      }
+    }
+
     // 6. Generate answer with citations
     this.logger.debug(`[Chat ${chatId}] Step 6: Generating answer with citations`);
     const answerWithCitations =

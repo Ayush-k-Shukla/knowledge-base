@@ -214,7 +214,10 @@ function App() {
       const line = rawLine.trim();
       if (!line) continue;
 
-      const sourceMatch = line.match(/^\d+\.\s*\[(.+?)\]$/);
+      let sourceMatch = line.match(/^\d+\.\s*\*\*(.+?)\*\*$/);
+      if (!sourceMatch) {
+        sourceMatch = line.match(/^\d+\.\s*\[(.+?)\]$/);
+      }
       const sentenceMatch = line.match(/^[-*]\s+(.+)$/);
 
       if (sourceMatch) {
@@ -1028,7 +1031,7 @@ function App() {
                                               key={index}
                                               className='citation'
                                               data-tooltip={
-                                                source?.snippet || ''
+                                                source ? `${source.sourceId}\n\n${source.snippet}` : ''
                                               }
                                             >
                                               {part}

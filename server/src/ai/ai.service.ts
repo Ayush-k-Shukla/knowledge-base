@@ -14,7 +14,9 @@ export interface Citation {
   sourceId: string;
   chunkId: string;
   text: string;
+  title?: string;
   relevantSentences: string[];
+  originalMatch: string;
 }
 
 export interface AnswerWithCitations {
@@ -121,7 +123,7 @@ export class AiService {
 
   async generateAnswerWithCitations(
     question: string,
-    contextChunks: Array<{ id: string; sourceId: string; text: string }>,
+    contextChunks: Array<{ id: string; sourceId: string; text: string; title?: string }>,
   ): Promise<AnswerWithCitations> {
     const model = this.genAI.getGenerativeModel({
       model: 'gemini-2.5-flash-lite',
@@ -165,7 +167,7 @@ export class AiService {
 
   private extractCitationsFromAnswer(
     answer: string,
-    contextChunks: Array<{ id: string; sourceId: string; text: string }>,
+    contextChunks: Array<{ id: string; sourceId: string; text: string; title?: string }>,
   ): Citation[] {
     const citationRegex = /\[([^\]]+):([^\]]+)\]/g;
     const citations: Citation[] = [];
@@ -173,7 +175,9 @@ export class AiService {
 
     let match;
     while ((match = citationRegex.exec(answer)) !== null) {
-      const [fullMatch, sourceId, chunkId] = match;
+      const [fullMatch, rawSourceId, rawChunkId] = match;
+      const sourceId = rawSourceId.trim();
+      const chunkId = rawChunkId.trim();
       const citationKey = `${sourceId}:${chunkId}`;
 
       if (processedCitations.has(citationKey)) continue;
@@ -192,7 +196,9 @@ export class AiService {
           sourceId,
           chunkId,
           text: chunk.text,
+          title: chunk.title,
           relevantSentences,
+          originalMatch: fullMatch,
         });
       }
     }
@@ -294,7 +300,7 @@ export class AiService {
     }
   }
 
-  async performWebSearch(query: string): Promise<string> {
+  async performWebSearch(query: string): Promise<Array<{title: string, snippet: string}>> {
     try {
       const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
         headers: {
@@ -305,26 +311,20 @@ export class AiService {
       const html = await response.text();
       const $ = cheerio.load(html);
       
-      let searchContext = 'WEB SEARCH RESULTS:\n';
-      let count = 0;
+      const results: Array<{title: string, snippet: string}> = [];
       
       $('.result').slice(0, 5).each((i, el) => {
         const title = $(el).find('.result__title').text().trim();
         const snippet = $(el).find('.result__snippet').text().trim();
         if (title && snippet) {
-          searchContext += `\n[Source: Web_${count}] ${title}\n${snippet}\n`;
-          count++;
+          results.push({ title, snippet });
         }
       });
       
-      if (count === 0) {
-        return '';
-      }
-      
-      return searchContext;
+      return results;
     } catch (error) {
       console.error('Web search error:', error);
-      return '';
+      return [];
     }
   }
 }

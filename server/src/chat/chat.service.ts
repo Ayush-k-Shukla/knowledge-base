@@ -90,12 +90,13 @@ export class ChatService {
 
     // 5. Prepare context chunks with IDs for citation
     this.logger.debug(`[Chat ${chatId}] Step 5: Preparing context chunks`);
-    const contextChunks = rerankedMatches
+    const contextChunks: any[] = rerankedMatches
       .map((match, index) => ({
         id: match.id || `chunk_${index}`,
         sourceId:
           match.metadata?.sourceId || match.metadata?.documentId || 'unknown',
         text: match.metadata?.text || '',
+        title: match.metadata?.source || match.metadata?.title || '',
       }))
       .filter((chunk) => chunk.text);
 
@@ -120,14 +121,17 @@ export class ChatService {
       const searchQuery = evaluation.message || question;
       const webResults = await this.aiService.performWebSearch(searchQuery);
       
-      // We append web results as a pseudo-chunk
-      if (webResults) {
-        contextChunks.push({
-          id: 'web_search',
-          sourceId: 'web',
-          text: webResults,
+      // We append web results as individual chunks
+      if (webResults && webResults.length > 0) {
+        webResults.forEach((res, idx) => {
+          contextChunks.push({
+            id: `Web_${idx}`,
+            sourceId: 'WebSearch',
+            text: `Title: ${res.title}\nInformation: ${res.snippet}`,
+            title: res.title,
+          });
         });
-        this.logger.debug(`[Chat ${chatId}] Appended web search results to context`);
+        this.logger.debug(`[Chat ${chatId}] Appended ${webResults.length} web search results to context`);
       }
     }
 
@@ -184,17 +188,19 @@ export class ChatService {
       key: string;
       sourceId: string;
       chunkId: string;
+      title?: string;
       sentences: string[];
     }> = [];
 
     answerWithCitations.citations.forEach((citation) => {
-      const key = `[${citation.sourceId}:${citation.chunkId}]`;
+      const key = citation.originalMatch;
       if (!citationMap.has(key)) {
         citationMap.set(key, citationMap.size + 1);
         orderedCitations.push({
           key,
           sourceId: citation.sourceId,
           chunkId: citation.chunkId,
+          title: citation.title,
           sentences: citation.relevantSentences,
         });
       }
@@ -207,7 +213,18 @@ export class ChatService {
     if (orderedCitations.length > 0) {
       formattedAnswer += '\n\n### Sources\n';
       orderedCitations.forEach((citation, i) => {
-        formattedAnswer += `${i + 1}. ${citation.key}\n`;
+        let sourceLabel = 'Source';
+        if (citation.sourceId === 'WebSearch') {
+          sourceLabel = `🌐 Web Search: ${citation.title || citation.chunkId}`;
+        } else if (citation.title) {
+          sourceLabel = `📄 ${citation.title}`;
+        } else if (citation.sourceId === 'unknown') {
+          sourceLabel = `📄 Uploaded Document`;
+        } else {
+          sourceLabel = `📄 Document (${citation.sourceId.substring(0, 8)})`;
+        }
+
+        formattedAnswer += `${i + 1}. **${sourceLabel}**\n`;
         citation.sentences.forEach((sentence) => {
           formattedAnswer += `   - ${sentence}\n`;
         });

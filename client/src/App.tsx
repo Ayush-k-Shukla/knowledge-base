@@ -13,6 +13,8 @@ import {
   Trash2,
   UploadCloud,
   User,
+  AlertCircle,
+  AlertTriangle,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
@@ -25,6 +27,8 @@ interface Message {
   id: string;
   type: 'user' | 'bot';
   text: string;
+  confidenceScore?: number;
+  confidenceReasoning?: string;
 }
 
 interface UploadedFile {
@@ -441,6 +445,8 @@ function App() {
               id: m._id,
               type: m.role,
               text: m.content,
+              confidenceScore: m.confidenceScore,
+              confidenceReasoning: m.confidenceReasoning,
             })),
           );
         }
@@ -563,6 +569,8 @@ function App() {
         id: (Date.now() + 1).toString(),
         type: 'bot',
         text: response.data.answer,
+        confidenceScore: response.data.confidenceScore,
+        confidenceReasoning: response.data.confidenceReasoning,
       };
       setMessages((prev) => [...prev, botMessage]);
     } catch (error) {
@@ -1007,6 +1015,29 @@ function App() {
                     <User size={18} style={{ marginTop: '4px' }} />
                   )}
                   <div className='markdown-container'>
+                    {m.type === 'bot' && m.confidenceScore !== undefined && (
+                      <div 
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          padding: '2px 8px',
+                          borderRadius: '12px',
+                          fontSize: '10px',
+                          fontWeight: 600,
+                          marginBottom: '8px',
+                          cursor: 'help',
+                          color: m.confidenceScore >= 80 ? '#10b981' : m.confidenceScore >= 50 ? '#f59e0b' : '#ef4444',
+                          background: m.confidenceScore >= 80 ? 'rgba(16, 185, 129, 0.1)' : m.confidenceScore >= 50 ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                          border: `1px solid ${m.confidenceScore >= 80 ? 'rgba(16, 185, 129, 0.2)' : m.confidenceScore >= 50 ? 'rgba(245, 158, 11, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`
+                        }}
+                        title={m.confidenceReasoning}
+                      >
+                        {m.confidenceScore >= 80 ? <CheckCircle2 size={12} /> : m.confidenceScore >= 50 ? <AlertCircle size={12} /> : <AlertTriangle size={12} />}
+                        {m.confidenceScore >= 80 ? 'Highly Grounded' : m.confidenceScore >= 50 ? 'Partially Grounded' : 'Low Confidence'}
+                        <span style={{opacity: 0.8}}>({m.confidenceScore}%)</span>
+                      </div>
+                    )}
                     {m.type === 'bot' ? (
                       (() => {
                         const { mainText, sources } = parseBotMessage(m.text);

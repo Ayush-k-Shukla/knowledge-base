@@ -167,9 +167,9 @@ export class AiService {
 
   private extractCitationsFromAnswer(
     answer: string,
-    contextChunks: Array<{ id: string; sourceId: string; text: string; title?: string }>,
+    contextChunks: Array<{ id: string; sourceId: string; text: string; title?: string, metadata?: any }>,
   ): Citation[] {
-    const citationRegex = /\[([^\]]+):([^\]]+)\]/g;
+    const citationRegex = /\[([^:\]]+):([^\]]+)\]/g;
     const citations: Citation[] = [];
     const processedCitations = new Set<string>();
 
@@ -193,10 +193,10 @@ export class AiService {
           answer,
         );
         citations.push({
-          sourceId,
+          sourceId: chunk.metadata?.source || chunk.metadata?.sourceId || chunk.metadata?.documentId || sourceId,
           chunkId,
           text: chunk.text,
-          title: chunk.title,
+          title: chunk.metadata?.title || chunk.metadata?.source || chunk.title,
           relevantSentences,
           originalMatch: fullMatch,
         });
@@ -325,6 +325,66 @@ export class AiService {
     } catch (error) {
       console.error('Web search error:', error);
       return [];
+    }
+  }
+
+  async calculateConfidenceScore(
+    question: string,
+    answer: string,
+    contextChunks: Array<{ id: string; sourceId: string; text: string; title?: string }>,
+  ): Promise<{ score: number; reasoning: string }> {
+    const model = this.genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash-lite',
+    });
+
+    const contextText = contextChunks
+      .map((c) => `[${c.sourceId}:${c.id}] ${c.title ? c.title + '\n' : ''}${c.text}`)
+      .join('\n\n---\n\n');
+
+    const prompt = `
+      You are an expert AI auditor evaluating the grounding and factual accuracy of an AI-generated answer.
+      You will be provided with:
+      1. A user question
+      2. The retrieved context chunks
+      3. The AI's generated answer
+
+      Your task is to evaluate how well the AI's answer is supported by the context.
+      - Does the answer contain hallucinations (facts not present in the context)?
+      - Does the answer directly address the question using only the provided context?
+      
+      Score the answer from 0 to 100, where:
+      - 90-100: Perfectly grounded in the context.
+      - 70-89: Mostly grounded, but might contain minor extrapolations or miss some nuances.
+      - 40-69: Partially grounded, contains some unsupported claims.
+      - 0-39: Poorly grounded, hallucinated, or completely contradicts the context.
+
+      Return the evaluation as a JSON object with two fields:
+      - "score": A number between 0 and 100.
+      - "reasoning": A brief explanation of why this score was given (1-2 sentences).
+
+      Question: ${question}
+      
+      Context:
+      ${contextText}
+
+      Generated Answer:
+      ${answer}
+    `;
+
+    try {
+      const response = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+        },
+      });
+
+      const responseText = response.response.text();
+      return JSON.parse(responseText);
+    } catch (e) {
+      console.error('Failed to calculate confidence score', e);
+      return { score: 50, reasoning: 'Failed to calculate confidence score due to an internal error.' };
     }
   }
 }

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AiService, AnswerWithCitations } from '../ai/ai.service';
@@ -49,7 +49,7 @@ export class ChatService {
     chatId: string,
     question: string,
     userId: string,
-  ): Promise<string> {
+  ): Promise<{ answer: string; confidenceScore?: number; confidenceReasoning?: string }> {
     this.logger.log(`[Chat ${chatId}] Processing question: "${question}"`);
     await this.ensureOwnership(chatId, userId);
 
@@ -94,7 +94,7 @@ export class ChatService {
       .map((match, index) => ({
         id: match.id || `chunk_${index}`,
         sourceId:
-          match.metadata?.sourceId || match.metadata?.documentId || 'unknown',
+          match.metadata?.source || match.metadata?.sourceId || match.metadata?.documentId || 'unknown',
         text: match.metadata?.text || '',
         title: match.metadata?.source || match.metadata?.title || '',
       }))
@@ -113,14 +113,14 @@ export class ChatService {
         role: 'bot',
         content: botResponse,
       }).save();
-      return botResponse;
+      return { answer: botResponse };
     }
 
     if (evaluation.action === 'WEB_SEARCH') {
       this.logger.debug(`[Chat ${chatId}] Performing web search for: ${evaluation.message}`);
       const searchQuery = evaluation.message || question;
       const webResults = await this.aiService.performWebSearch(searchQuery);
-      
+
       // We append web results as individual chunks
       if (webResults && webResults.length > 0) {
         webResults.forEach((res, idx) => {
@@ -145,16 +145,30 @@ export class ChatService {
     const formattedAnswer =
       this.formatAnswerWithCitationsAndSnippets(answerWithCitations);
 
-    // 8. Save bot answer
-    this.logger.debug(`[Chat ${chatId}] Step 8: Saving bot answer`);
+    // 8. Calculate Confidence Score
+    this.logger.debug(`[Chat ${chatId}] Step 8: Calculating confidence score`);
+    const confidence = await this.aiService.calculateConfidenceScore(
+      question,
+      formattedAnswer,
+      contextChunks,
+    );
+
+    // 9. Save bot answer
+    this.logger.debug(`[Chat ${chatId}] Step 9: Saving bot answer`);
     await new this.messageModel({
       chatId: new Types.ObjectId(chatId),
       role: 'bot',
       content: formattedAnswer,
+      confidenceScore: confidence.score,
+      confidenceReasoning: confidence.reasoning,
     }).save();
 
     this.logger.log(`[Chat ${chatId}] Request completed successfully`);
-    return formattedAnswer;
+    return {
+      answer: formattedAnswer,
+      confidenceScore: confidence.score,
+      confidenceReasoning: confidence.reasoning,
+    };
   }
 
   private mergeAndDeduplicateMatches(matches: any[]): any[] {

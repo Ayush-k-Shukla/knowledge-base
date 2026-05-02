@@ -32,12 +32,12 @@ export class ChatController {
     @Body('question') question: string,
     @Request() req: any,
   ) {
-    const answer = await this.chatService.askQuestion(
+    const result = await this.chatService.askQuestion(
       chatId,
       question,
       req.user.userId,
     );
-    return { answer };
+    return result;
   }
 
   @Get('history/:chatId')

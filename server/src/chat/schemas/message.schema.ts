@@ -14,6 +14,12 @@ export class Message {
   @Prop({ required: true })
   content: string;
 
+  @Prop({ required: false })
+  confidenceScore?: number;
+
+  @Prop({ required: false })
+  confidenceReasoning?: string;
+
   @Prop({ default: Date.now })
   createdAt: Date;
 }

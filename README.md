@@ -59,6 +59,49 @@ flowchart TD
   Client -->|CORS / HTTP| Server
 ```
 
+## Detailed Flows
+
+### Indexing Flow
+
+```mermaid
+flowchart TD
+    A[User uploads file<br>or indexes website] --> B{Type?}
+    B -->|Document| C[Extract text<br>from PDF/TXT]
+    B -->|Website| D[Crawl website<br>pages]
+    C --> E[Chunk text<br>into segments]
+    D --> E
+    E --> F[Generate embeddings<br>for each chunk]
+    F --> G[Upsert vectors<br>to Pinecone]
+    G --> H[Save metadata<br>to MongoDB]
+    H --> I[Indexing complete]
+```
+
+### Question Answering Flow
+
+```mermaid
+flowchart TD
+    A[User asks question] --> B[Save question<br>to MongoDB]
+    B --> C[Rewrite query<br>into 3 versions]
+    C --> D[For each rewritten<br>query:]
+    D --> E[Generate embedding]
+    E --> F[Query Pinecone<br>for top matches]
+    F --> G[Merge and<br>deduplicate results]
+    G --> H[Rerank matches<br>with Cohere]
+    H --> I[Evaluate context<br>sufficiency]
+    I --> J{Action?}
+    J -->|Clarify| K[Ask for<br>clarification]
+    J -->|Web Search| L[Perform web search,<br>append results]
+    J -->|Proceed| M[Generate answer<br>with citations]
+    K --> N[Return clarification<br>message]
+    L --> M
+    M --> O[Format answer with<br>citations and snippets]
+    O --> P[Calculate confidence<br>score]
+    P --> Q[Save answer<br>to MongoDB]
+    Q --> R[Return answer<br>to user]
+```
+
+**Note on Clarification Flow**: If the system determines that the question lacks sufficient context or is unclear, it will ask for clarification. In this case, the bot responds with a clarification request, and the conversation ends for that question. The user can then provide more details in a follow-up question, which will restart the flow with improved context.
+
 ## Getting started
 
 ### Backend

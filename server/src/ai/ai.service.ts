@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as cheerio from 'cheerio';
 import { CohereClientV2 } from 'cohere-ai';
@@ -25,8 +25,21 @@ export interface AnswerWithCitations {
 
 @Injectable()
 export class AiService {
+  private readonly logger = new Logger(AiService.name);
   private genAI: GoogleGenerativeAI;
   private cohere: CohereClientV2;
+  private embeddingCache = new Map<
+    string,
+    { embedding: number[]; timestamp: number }
+  >();
+  private readonly CACHE_TTL = 1000 * 60 * 30; // 30 minutes
+  private readonly MAX_CACHE_SIZE = 200; // Limit cache size to prevent memory bloat
+  private webSearchCache = new Map<
+    string,
+    { results: Array<{ title: string; snippet: string }>; timestamp: number }
+  >();
+  private readonly WEB_CACHE_TTL = 1000 * 60 * 5; // 5 minutes for web search
+  private readonly MAX_WEB_CACHE_SIZE = 100;
 
   constructor(private configService: ConfigService) {
     const apiKey = this.configService.get<string>('GEMINI_API_KEY')!;
@@ -39,11 +52,63 @@ export class AiService {
   }
 
   async generateEmbedding(text: string): Promise<number[]> {
+    // Check cache first
+    const cached = this.embeddingCache.get(text);
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+      this.logger.debug(
+        `[Embedding Cache] HIT for text (${text.substring(0, 50)}...)`,
+      );
+      return cached.embedding;
+    }
+
+    this.logger.debug(
+      `[Embedding Cache] MISS for text (${text.substring(0, 50)}...) - generating new embedding`,
+    );
+    const startTime = Date.now();
+
     const model = this.genAI.getGenerativeModel({
       model: 'gemini-embedding-001',
     });
     const result = await model.embedContent(text);
-    return result.embedding.values;
+    const embedding = result.embedding.values;
+
+    const generationTime = Date.now() - startTime;
+    this.logger.debug(
+      `[Embedding Cache] Generated embedding in ${generationTime}ms`,
+    );
+
+    // Cache the result
+    this.embeddingCache.set(text, { embedding, timestamp: Date.now() });
+
+    // Clean up old cache entries periodically (more aggressive cleanup)
+    if (this.embeddingCache.size > this.MAX_CACHE_SIZE) {
+      const beforeSize = this.embeddingCache.size;
+      this.cleanEmbeddingCache();
+      const afterSize = this.embeddingCache.size;
+      this.logger.debug(
+        `[Embedding Cache] Cleaned up ${beforeSize - afterSize} entries. Cache size: ${afterSize}/${this.MAX_CACHE_SIZE}`,
+      );
+    }
+
+    return embedding;
+  }
+
+  private cleanEmbeddingCache(): void {
+    const now = Date.now();
+    const entries = Array.from(this.embeddingCache.entries());
+
+    // Sort by timestamp (oldest first) and remove oldest entries
+    entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+
+    // Remove oldest 20% of entries or until we're at 80% capacity
+    const toRemove = Math.max(20, Math.floor(entries.length * 0.2));
+    for (
+      let i = 0;
+      i < toRemove && this.embeddingCache.size > this.MAX_CACHE_SIZE * 0.8;
+      i++
+    ) {
+      this.embeddingCache.delete(entries[i][0]);
+    }
   }
 
   async rewriteQuery(query: string): Promise<QueryRewrite> {
@@ -342,6 +407,18 @@ export class AiService {
   async performWebSearch(
     query: string,
   ): Promise<Array<{ title: string; snippet: string }>> {
+    // Check cache first
+    const cached = this.webSearchCache.get(query);
+    if (cached && Date.now() - cached.timestamp < this.WEB_CACHE_TTL) {
+      this.logger.debug(`[Web Search Cache] HIT for query: "${query}"`);
+      return cached.results;
+    }
+
+    this.logger.debug(
+      `[Web Search Cache] MISS for query: "${query}" - performing web search`,
+    );
+    const startTime = Date.now();
+
     try {
       const response = await fetch(
         `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
@@ -368,10 +445,49 @@ export class AiService {
           }
         });
 
+      const searchTime = Date.now() - startTime;
+      this.logger.debug(
+        `[Web Search Cache] Completed web search in ${searchTime}ms, found ${results.length} results`,
+      );
+
+      // Cache the results
+      this.webSearchCache.set(query, { results, timestamp: Date.now() });
+
+      // Clean up old cache entries
+      if (this.webSearchCache.size > this.MAX_WEB_CACHE_SIZE) {
+        const beforeSize = this.webSearchCache.size;
+        this.cleanWebSearchCache();
+        const afterSize = this.webSearchCache.size;
+        this.logger.debug(
+          `[Web Search Cache] Cleaned up ${beforeSize - afterSize} entries. Cache size: ${afterSize}/${this.MAX_WEB_CACHE_SIZE}`,
+        );
+      }
+
       return results;
     } catch (error) {
-      console.error('Web search error:', error);
+      const searchTime = Date.now() - startTime;
+      this.logger.error(
+        `[Web Search Cache] Web search failed after ${searchTime}ms: ${error.message}`,
+      );
       return [];
+    }
+  }
+
+  private cleanWebSearchCache(): void {
+    const now = Date.now();
+    const entries = Array.from(this.webSearchCache.entries());
+
+    // Sort by timestamp (oldest first) and remove oldest entries
+    entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+
+    // Remove oldest 20% of entries or until we're at 80% capacity
+    const toRemove = Math.max(10, Math.floor(entries.length * 0.2));
+    for (
+      let i = 0;
+      i < toRemove && this.webSearchCache.size > this.MAX_WEB_CACHE_SIZE * 0.8;
+      i++
+    ) {
+      this.webSearchCache.delete(entries[i][0]);
     }
   }
 

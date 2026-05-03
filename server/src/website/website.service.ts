@@ -67,36 +67,52 @@ export class WebsiteService {
 
         // Chunk & embed
         const chunks = this.chunkText(text, 1000, 200);
-        const vectors: any[] = [];
+        const validChunks = chunks.filter((chunk) => chunk.trim());
 
-        for (let i = 0; i < chunks.length; i++) {
-          const chunk = chunks[i];
-          if (!chunk.trim()) continue;
+        // Generate embeddings in parallel
+        this.logger.debug(
+          `[Website ${url}] Starting parallel embedding generation for ${validChunks.length} chunks`,
+        );
+        const embeddingStartTime = Date.now();
 
-          const embedding = await this.aiService.generateEmbedding(chunk);
-          vectors.push({
-            id: `${chatId}-${encodeURIComponent(url)}-${i}`,
-            values: embedding,
-            metadata: {
-              text: chunk,
-              source: startUrl,
-              pageUrl: url,
-              chunkIndex: i,
-              type: 'website',
-              chatId,
-            },
-          });
+        const embeddingPromises = validChunks.map((chunk) =>
+          this.aiService.generateEmbedding(chunk),
+        );
+        const embeddings = await Promise.all(embeddingPromises);
 
-          // Batch upsert every 50 vectors to avoid payload limits
-          if (vectors.length >= 50) {
-            await this.vectorService.upsert([...vectors]);
-            vectors.length = 0;
-          }
+        const embeddingTime = Date.now() - embeddingStartTime;
+        this.logger.debug(
+          `[Website ${url}] Parallel embedding generation completed in ${embeddingTime}ms`,
+        );
+
+        const vectors = validChunks.map((chunk, i) => ({
+          id: `${chatId}-${encodeURIComponent(url)}-${i}`,
+          values: embeddings[i],
+          metadata: {
+            text: chunk,
+            source: startUrl,
+            pageUrl: url,
+            chunkIndex: i,
+            type: 'website',
+            chatId,
+          },
+        }));
+
+        // Batch upsert every 50 vectors to avoid payload limits
+        this.logger.debug(
+          `[Website ${url}] Starting vector upsert for ${vectors.length} vectors`,
+        );
+        const upsertStartTime = Date.now();
+
+        for (let i = 0; i < vectors.length; i += 50) {
+          const batch = vectors.slice(i, i + 50);
+          await this.vectorService.upsert(batch);
         }
 
-        if (vectors.length > 0) {
-          await this.vectorService.upsert(vectors);
-        }
+        const upsertTime = Date.now() - upsertStartTime;
+        this.logger.debug(
+          `[Website ${url}] Vector upsert completed in ${upsertTime}ms`,
+        );
 
         pageCount++;
         this.logger.log(`Indexed page ${pageCount}: ${url}`);

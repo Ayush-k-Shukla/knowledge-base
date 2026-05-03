@@ -69,17 +69,37 @@ export class ChatService {
     this.logger.debug(`[Chat ${chatId}] Step 2: Rewriting query`);
     const queryRewrite = await this.aiService.rewriteQuery(question);
 
-    // 3. Run vector search for all 3 rewritten queries
-    this.logger.debug(`[Chat ${chatId}] Step 3: Running vector search`);
-    const allMatches = [];
-    for (const rewrittenQuery of queryRewrite.rewrittenQueries) {
-      const queryEmbedding =
-        await this.aiService.generateEmbedding(rewrittenQuery);
-      const matches = await this.vectorService.query(queryEmbedding, 5, {
-        chatId,
-      });
-      allMatches.push(...matches);
-    }
+    // 3. Run vector search for all 3 rewritten queries (parallelized)
+    this.logger.debug(
+      `[Chat ${chatId}] Step 3: Running parallel vector search for ${queryRewrite.rewrittenQueries.length} rewritten queries`,
+    );
+    const retrievalStartTime = Date.now();
+
+    const embeddingPromises = queryRewrite.rewrittenQueries.map(
+      async (rewrittenQuery) => {
+        try {
+          const embedding =
+            await this.aiService.generateEmbedding(rewrittenQuery);
+          const matches = await this.vectorService.query(embedding, 5, {
+            chatId,
+          });
+          return matches;
+        } catch (error) {
+          this.logger.warn(
+            `[Chat ${chatId}] Failed to process rewritten query "${rewrittenQuery}": ${error.message}`,
+          );
+          return []; // Return empty array on failure to continue with other queries
+        }
+      },
+    );
+
+    const searchResults = await Promise.all(embeddingPromises);
+    const allMatches = searchResults.flat();
+    const retrievalTime = Date.now() - retrievalStartTime;
+
+    this.logger.debug(
+      `[Chat ${chatId}] Parallel retrieval completed in ${retrievalTime}ms. Total matches: ${allMatches.length} from ${searchResults.length} queries`,
+    );
 
     // 4. Merge and deduplicate results based on chunk ID
     this.logger.debug(

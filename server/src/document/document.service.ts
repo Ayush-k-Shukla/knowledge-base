@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AiService } from '../ai/ai.service';
@@ -13,6 +13,8 @@ const pdf = require('pdf-parse');
 
 @Injectable()
 export class DocumentService {
+  private readonly logger = new Logger(DocumentService.name);
+
   constructor(
     private aiService: AiService,
     private vectorService: VectorService,
@@ -44,32 +46,52 @@ export class DocumentService {
 
     // Simple chunking strategy
     const chunks = this.chunkText(text, 1000, 200);
+    this.logger.debug(
+      `[Document ${file.originalname}] Created ${chunks.length} chunks for processing`,
+    );
 
-    const vectors = [];
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const embedding = await this.aiService.generateEmbedding(chunk);
-      vectors.push({
-        id: `${chatId}-${file.originalname}-${i}`,
-        values: embedding,
-        metadata: {
-          text: chunk,
-          source: file.originalname,
-          chunkIndex: i,
-          chatId,
-        },
-      });
+    // Generate embeddings in parallel
+    this.logger.debug(
+      `[Document ${file.originalname}] Starting parallel embedding generation for ${chunks.length} chunks`,
+    );
+    const embeddingStartTime = Date.now();
 
-      // Upsert in batches of 50 to avoid payload limits
-      if (vectors.length >= 50) {
-        await this.vectorService.upsert([...vectors]);
-        vectors.length = 0;
-      }
+    const embeddingPromises = chunks.map((chunk) =>
+      this.aiService.generateEmbedding(chunk),
+    );
+    const embeddings = await Promise.all(embeddingPromises);
+
+    const embeddingTime = Date.now() - embeddingStartTime;
+    this.logger.debug(
+      `[Document ${file.originalname}] Parallel embedding generation completed in ${embeddingTime}ms`,
+    );
+
+    const vectors = chunks.map((chunk, i) => ({
+      id: `${chatId}-${file.originalname}-${i}`,
+      values: embeddings[i],
+      metadata: {
+        text: chunk,
+        source: file.originalname,
+        chunkIndex: i,
+        chatId,
+      },
+    }));
+
+    // Upsert in batches of 50 to avoid payload limits
+    this.logger.debug(
+      `[Document ${file.originalname}] Starting vector upsert for ${vectors.length} vectors`,
+    );
+    const upsertStartTime = Date.now();
+
+    for (let i = 0; i < vectors.length; i += 50) {
+      const batch = vectors.slice(i, i + 50);
+      await this.vectorService.upsert(batch);
     }
 
-    if (vectors.length > 0) {
-      await this.vectorService.upsert(vectors);
-    }
+    const upsertTime = Date.now() - upsertStartTime;
+    this.logger.debug(
+      `[Document ${file.originalname}] Vector upsert completed in ${upsertTime}ms`,
+    );
 
     // Save metadata to MongoDB
     await this.documentModel.findOneAndUpdate(

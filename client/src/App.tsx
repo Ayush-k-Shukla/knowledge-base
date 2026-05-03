@@ -246,7 +246,7 @@ function App() {
     return rawSources.map((source, index) => ({
       ...source,
       marker: `[${index + 1}]`,
-      snippet: source.sentences[0] || '',
+      snippet: source.sentences[0] || 'Source snippet unavailable.',
     }));
   };
 
@@ -1057,13 +1057,15 @@ function App() {
                                       return parts.map((part, index) => {
                                         if (part.match(/^\[[0-9]+\]$/)) {
                                           const source = sourceIndex[part];
+                                          const tooltip = source 
+                                            ? `${source.sourceId}\n\n${source.snippet}` 
+                                            : "Citation details not available for this message.";
+                                          
                                           return (
                                             <span
                                               key={index}
                                               className='citation'
-                                              data-tooltip={
-                                                source ? `${source.sourceId}\n\n${source.snippet}` : ''
-                                              }
+                                              data-tooltip={tooltip}
                                             >
                                               {part}
                                             </span>

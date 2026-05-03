@@ -131,7 +131,7 @@ export class AiService {
 
     // Create context with chunk IDs for citation
     const contextWithIds = contextChunks
-      .map((chunk, index) => `[${chunk.sourceId}:${chunk.id}]\n${chunk.text}`)
+      .map((chunk, index) => `[Index: ${index}] [Source: ${chunk.sourceId}:${chunk.id}]\n${chunk.text}`)
       .join('\n\n---\n\n');
 
     const prompt = `
@@ -141,9 +141,10 @@ export class AiService {
       1. Answer ONLY using information from the provided context chunks.
       2. If the context doesn't contain enough information to answer the question, say "I don't have enough information in the provided context to answer this question."
       3. Use inline citations in the format [source_id:chunk_id] immediately after each factual statement.
-      4. Do not hallucinate or add information not present in the context.
-      5. Be concise but comprehensive.
-      6. If citing multiple sources for the same point, list them as [source1:chunk1][source2:chunk2].
+      4. As a fallback, you may use [index] (e.g., [0], [1]) if the source_id:chunk_id is too long, but [source_id:chunk_id] is preferred.
+      5. Do not hallucinate or add information not present in the context.
+      6. Be concise but comprehensive.
+      7. If citing multiple sources for the same point, list them as [source1:chunk1][source2:chunk2] or [0][1].
 
       CONTEXT:
       ${contextWithIds}
@@ -169,32 +170,46 @@ export class AiService {
     answer: string,
     contextChunks: Array<{ id: string; sourceId: string; text: string; title?: string, metadata?: any }>,
   ): Citation[] {
-    const citationRegex = /\[([^:\]]+):([^\]]+)\]/g;
+    // Matches [sourceId:chunkId] or [index]
+    const citationRegex = /\[(?:([^:\]\s]+):([^\]\s]+)|(\d+))\]/g;
     const citations: Citation[] = [];
     const processedCitations = new Set<string>();
 
     let match;
     while ((match = citationRegex.exec(answer)) !== null) {
-      const [fullMatch, rawSourceId, rawChunkId] = match;
-      const sourceId = rawSourceId.trim();
-      const chunkId = rawChunkId.trim();
-      const citationKey = `${sourceId}:${chunkId}`;
+      const fullMatch = match[0];
+      const sourceIdFromMatch = match[1]?.trim();
+      const chunkIdFromMatch = match[2]?.trim();
+      const indexFromMatch = match[3];
 
-      if (processedCitations.has(citationKey)) continue;
-      processedCitations.add(citationKey);
+      let chunk;
+      let citationKey;
 
-      const chunk = contextChunks.find(
-        (c) => c.sourceId === sourceId && c.id === chunkId,
-      );
-      if (chunk) {
+      if (indexFromMatch !== undefined) {
+        // Numeric citation like [0]
+        const index = parseInt(indexFromMatch, 10);
+        chunk = contextChunks[index];
+        citationKey = `index:${index}`;
+      } else if (sourceIdFromMatch && chunkIdFromMatch) {
+        // Complex citation like [source:id]
+        chunk = contextChunks.find(
+          (c) => c.sourceId === sourceIdFromMatch && c.id === chunkIdFromMatch,
+        );
+        citationKey = `${sourceIdFromMatch}:${chunkIdFromMatch}`;
+      }
+
+      if (chunk && citationKey && !processedCitations.has(citationKey)) {
+        processedCitations.add(citationKey);
+        
         // Extract 1-2 relevant sentences from the chunk
         const relevantSentences = this.extractRelevantSentences(
           chunk.text,
           answer,
         );
+
         citations.push({
-          sourceId: chunk.metadata?.source || chunk.metadata?.sourceId || chunk.metadata?.documentId || sourceId,
-          chunkId,
+          sourceId: chunk.metadata?.source || chunk.metadata?.sourceId || chunk.metadata?.documentId || chunk.sourceId,
+          chunkId: chunk.id,
           text: chunk.text,
           title: chunk.metadata?.title || chunk.metadata?.source || chunk.title,
           relevantSentences,

@@ -402,5 +402,34 @@ export class AiService {
       return { score: 50, reasoning: 'Failed to calculate confidence score due to an internal error.' };
     }
   }
+
+  async generateChatTitle(messages: Array<{ role: string; content: string }>): Promise<string> {
+    const model = this.genAI.getGenerativeModel({
+      model: 'gemini-2.5-flash-lite',
+    });
+
+    const conversationText = messages
+      .map((msg) => `${msg.role}: ${msg.content}`)
+      .join('\n');
+
+    const prompt = `
+      Based on the following conversation, generate a concise, descriptive title (5-10 words) that captures the main topic or question.
+
+      Conversation:
+      ${conversationText}
+
+      Title:
+    `;
+
+    try {
+      const result = await model.generateContent(prompt);
+      const title = result.response.text().trim();
+      // Clean up the title, remove quotes if present
+      return title.replace(/^["']|["']$/g, '').substring(0, 50);
+    } catch (error) {
+      console.error('Failed to generate chat title:', error);
+      return 'Chat Session';
+    }
+  }
 }
 

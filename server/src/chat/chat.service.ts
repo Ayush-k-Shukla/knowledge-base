@@ -49,9 +49,13 @@ export class ChatService {
     chatId: string,
     question: string,
     userId: string,
-  ): Promise<{ answer: string; confidenceScore?: number; confidenceReasoning?: string }> {
+  ): Promise<{
+    answer: string;
+    confidenceScore?: number;
+    confidenceReasoning?: string;
+  }> {
     this.logger.log(`[Chat ${chatId}] Processing question: "${question}"`);
-    await this.ensureOwnership(chatId, userId);
+    const session = await this.ensureOwnership(chatId, userId);
 
     // 1. Save user question
     this.logger.debug(`[Chat ${chatId}] Step 1: Saving user question`);
@@ -78,11 +82,15 @@ export class ChatService {
     }
 
     // 4. Merge and deduplicate results based on chunk ID
-    this.logger.debug(`[Chat ${chatId}] Step 4: Merging and deduplicating matches`);
+    this.logger.debug(
+      `[Chat ${chatId}] Step 4: Merging and deduplicating matches`,
+    );
     const uniqueMatches = this.mergeAndDeduplicateMatches(allMatches);
 
     // 4.5. Re-rank the deduplicated matches using Cohere
-    this.logger.debug(`[Chat ${chatId}] Step 4.5: Re-ranking ${uniqueMatches.length} matches with Cohere`);
+    this.logger.debug(
+      `[Chat ${chatId}] Step 4.5: Re-ranking ${uniqueMatches.length} matches with Cohere`,
+    );
     const rerankedMatches = await this.aiService.rerankChunks(
       question,
       uniqueMatches,
@@ -94,20 +102,33 @@ export class ChatService {
       .map((match, index) => ({
         id: match.id || `chunk_${index}`,
         sourceId:
-          match.metadata?.source || match.metadata?.sourceId || match.metadata?.documentId || 'unknown',
+          match.metadata?.source ||
+          match.metadata?.sourceId ||
+          match.metadata?.documentId ||
+          'unknown',
         text: match.metadata?.text || '',
         title: match.metadata?.source || match.metadata?.title || '',
       }))
       .filter((chunk) => chunk.text);
 
     // 5.5. Agentic Routing Layer
-    this.logger.debug(`[Chat ${chatId}] Step 5.5: Evaluating context sufficiency (Agentic Routing)`);
-    const evaluation = await this.aiService.evaluateContext(question, contextChunks);
-    this.logger.log(`[Chat ${chatId}] Routing Action: ${evaluation.action} - ${evaluation.reasoning}`);
+    this.logger.debug(
+      `[Chat ${chatId}] Step 5.5: Evaluating context sufficiency (Agentic Routing)`,
+    );
+    const evaluation = await this.aiService.evaluateContext(
+      question,
+      contextChunks,
+    );
+    this.logger.log(
+      `[Chat ${chatId}] Routing Action: ${evaluation.action} - ${evaluation.reasoning}`,
+    );
 
     if (evaluation.action === 'ASK_CLARIFICATION') {
-      this.logger.debug(`[Chat ${chatId}] Asking for clarification: ${evaluation.message}`);
-      const botResponse = evaluation.message || 'Could you please clarify your question?';
+      this.logger.debug(
+        `[Chat ${chatId}] Asking for clarification: ${evaluation.message}`,
+      );
+      const botResponse =
+        evaluation.message || 'Could you please clarify your question?';
       await new this.messageModel({
         chatId: new Types.ObjectId(chatId),
         role: 'bot',
@@ -117,7 +138,9 @@ export class ChatService {
     }
 
     if (evaluation.action === 'WEB_SEARCH') {
-      this.logger.debug(`[Chat ${chatId}] Performing web search for: ${evaluation.message}`);
+      this.logger.debug(
+        `[Chat ${chatId}] Performing web search for: ${evaluation.message}`,
+      );
       const searchQuery = evaluation.message || question;
       const webResults = await this.aiService.performWebSearch(searchQuery);
 
@@ -131,12 +154,16 @@ export class ChatService {
             title: res.title,
           });
         });
-        this.logger.debug(`[Chat ${chatId}] Appended ${webResults.length} web search results to context`);
+        this.logger.debug(
+          `[Chat ${chatId}] Appended ${webResults.length} web search results to context`,
+        );
       }
     }
 
     // 6. Generate answer with citations
-    this.logger.debug(`[Chat ${chatId}] Step 6: Generating answer with citations`);
+    this.logger.debug(
+      `[Chat ${chatId}] Step 6: Generating answer with citations`,
+    );
     const answerWithCitations =
       await this.aiService.generateAnswerWithCitations(question, contextChunks);
 
@@ -162,6 +189,21 @@ export class ChatService {
       confidenceScore: confidence.score,
       confidenceReasoning: confidence.reasoning,
     }).save();
+
+    // Generate chat title if it's still default
+    if (session.title === 'New Chat') {
+      const messages = await this.messageModel
+        .find({ chatId: new Types.ObjectId(chatId) })
+        .sort({ createdAt: 1 })
+        .exec();
+      if (messages.length >= 2) {
+        // At least user question and bot answer
+        const title = await this.aiService.generateChatTitle(
+          messages.map((m) => ({ role: m.role, content: m.content })),
+        );
+        await this.chatSessionModel.findByIdAndUpdate(chatId, { title });
+      }
+    }
 
     this.logger.log(`[Chat ${chatId}] Request completed successfully`);
     return {
@@ -285,7 +327,10 @@ export class ChatService {
     return { deleted: true };
   }
 
-  private async ensureOwnership(chatId: string, userId: string) {
+  private async ensureOwnership(
+    chatId: string,
+    userId: string,
+  ): Promise<ChatSessionDocument> {
     const session = await this.chatSessionModel.findOne({
       _id: new Types.ObjectId(chatId),
       userId: new Types.ObjectId(userId),
@@ -294,5 +339,6 @@ export class ChatService {
     if (!session) {
       throw new NotFoundException('Chat session not found');
     }
+    return session;
   }
 }

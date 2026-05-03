@@ -583,6 +583,8 @@ function App() {
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsAsking(false);
+      // Refresh sessions to update chat titles
+      await fetchSessions();
     }
   };
 

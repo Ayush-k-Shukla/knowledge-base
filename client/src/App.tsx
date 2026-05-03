@@ -1,6 +1,8 @@
 import axios from 'axios';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
+  AlertCircle,
+  AlertTriangle,
   Bot,
   BrainCircuit,
   CheckCircle2,
@@ -13,8 +15,6 @@ import {
   Trash2,
   UploadCloud,
   User,
-  AlertCircle,
-  AlertTriangle,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
@@ -1018,7 +1018,7 @@ function App() {
                   )}
                   <div className='markdown-container'>
                     {m.type === 'bot' && m.confidenceScore !== undefined && (
-                      <div 
+                      <div
                         style={{
                           display: 'inline-flex',
                           alignItems: 'center',
@@ -1029,15 +1029,37 @@ function App() {
                           fontWeight: 600,
                           marginBottom: '8px',
                           cursor: 'help',
-                          color: m.confidenceScore >= 80 ? '#10b981' : m.confidenceScore >= 50 ? '#f59e0b' : '#ef4444',
-                          background: m.confidenceScore >= 80 ? 'rgba(16, 185, 129, 0.1)' : m.confidenceScore >= 50 ? 'rgba(245, 158, 11, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                          border: `1px solid ${m.confidenceScore >= 80 ? 'rgba(16, 185, 129, 0.2)' : m.confidenceScore >= 50 ? 'rgba(245, 158, 11, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`
+                          color:
+                            m.confidenceScore >= 80
+                              ? '#10b981'
+                              : m.confidenceScore >= 50
+                                ? '#f59e0b'
+                                : '#ef4444',
+                          background:
+                            m.confidenceScore >= 80
+                              ? 'rgba(16, 185, 129, 0.1)'
+                              : m.confidenceScore >= 50
+                                ? 'rgba(245, 158, 11, 0.1)'
+                                : 'rgba(239, 68, 68, 0.1)',
+                          border: `1px solid ${m.confidenceScore >= 80 ? 'rgba(16, 185, 129, 0.2)' : m.confidenceScore >= 50 ? 'rgba(245, 158, 11, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`,
                         }}
                         title={m.confidenceReasoning}
                       >
-                        {m.confidenceScore >= 80 ? <CheckCircle2 size={12} /> : m.confidenceScore >= 50 ? <AlertCircle size={12} /> : <AlertTriangle size={12} />}
-                        {m.confidenceScore >= 80 ? 'Highly Grounded' : m.confidenceScore >= 50 ? 'Partially Grounded' : 'Low Confidence'}
-                        <span style={{opacity: 0.8}}>({m.confidenceScore}%)</span>
+                        {m.confidenceScore >= 80 ? (
+                          <CheckCircle2 size={12} />
+                        ) : m.confidenceScore >= 50 ? (
+                          <AlertCircle size={12} />
+                        ) : (
+                          <AlertTriangle size={12} />
+                        )}
+                        {m.confidenceScore >= 80
+                          ? 'Highly Grounded'
+                          : m.confidenceScore >= 50
+                            ? 'Partially Grounded'
+                            : 'Low Confidence'}
+                        <span style={{ opacity: 0.8 }}>
+                          ({m.confidenceScore}%)
+                        </span>
                       </div>
                     )}
                     {m.type === 'bot' ? (
@@ -1059,10 +1081,10 @@ function App() {
                                       return parts.map((part, index) => {
                                         if (part.match(/^\[[0-9]+\]$/)) {
                                           const source = sourceIndex[part];
-                                          const tooltip = source 
-                                            ? `${source.sourceId}\n\n${source.snippet}` 
-                                            : "Citation details not available for this message.";
-                                          
+                                          const tooltip = source
+                                            ? `${source.sourceId}\n\n${source.snippet}`
+                                            : 'Citation details not available for this message.';
+
                                           return (
                                             <span
                                               key={index}

@@ -1,9 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { CohereClientV2 } from 'cohere-ai';
 import * as cheerio from 'cheerio';
-
+import { CohereClientV2 } from 'cohere-ai';
 
 export interface QueryRewrite {
   originalQuery: string;
@@ -123,7 +122,12 @@ export class AiService {
 
   async generateAnswerWithCitations(
     question: string,
-    contextChunks: Array<{ id: string; sourceId: string; text: string; title?: string }>,
+    contextChunks: Array<{
+      id: string;
+      sourceId: string;
+      text: string;
+      title?: string;
+    }>,
   ): Promise<AnswerWithCitations> {
     const model = this.genAI.getGenerativeModel({
       model: 'gemini-2.5-flash-lite',
@@ -131,7 +135,10 @@ export class AiService {
 
     // Create context with chunk IDs for citation
     const contextWithIds = contextChunks
-      .map((chunk, index) => `[Index: ${index}] [Source: ${chunk.sourceId}:${chunk.id}]\n${chunk.text}`)
+      .map(
+        (chunk, index) =>
+          `[Index: ${index}] [Source: ${chunk.sourceId}:${chunk.id}]\n${chunk.text}`,
+      )
       .join('\n\n---\n\n');
 
     const prompt = `
@@ -168,7 +175,13 @@ export class AiService {
 
   private extractCitationsFromAnswer(
     answer: string,
-    contextChunks: Array<{ id: string; sourceId: string; text: string; title?: string, metadata?: any }>,
+    contextChunks: Array<{
+      id: string;
+      sourceId: string;
+      text: string;
+      title?: string;
+      metadata?: any;
+    }>,
   ): Citation[] {
     // Matches [sourceId:chunkId] or [index]
     const citationRegex = /\[(?:([^:\]\s]+):([^\]\s]+)|(\d+))\]/g;
@@ -200,7 +213,7 @@ export class AiService {
 
       if (chunk && citationKey && !processedCitations.has(citationKey)) {
         processedCitations.add(citationKey);
-        
+
         // Extract 1-2 relevant sentences from the chunk
         const relevantSentences = this.extractRelevantSentences(
           chunk.text,
@@ -208,7 +221,11 @@ export class AiService {
         );
 
         citations.push({
-          sourceId: chunk.metadata?.source || chunk.metadata?.sourceId || chunk.metadata?.documentId || chunk.sourceId,
+          sourceId:
+            chunk.metadata?.source ||
+            chunk.metadata?.sourceId ||
+            chunk.metadata?.documentId ||
+            chunk.sourceId,
           chunkId: chunk.id,
           text: chunk.text,
           title: chunk.metadata?.title || chunk.metadata?.source || chunk.title,
@@ -273,10 +290,17 @@ export class AiService {
     return result.response.text();
   }
 
-  async evaluateContext(question: string, contextChunks: any[]): Promise<{ action: 'ANSWER' | 'ASK_CLARIFICATION' | 'WEB_SEARCH', reasoning: string, message?: string }> {
+  async evaluateContext(
+    question: string,
+    contextChunks: any[],
+  ): Promise<{
+    action: 'ANSWER' | 'ASK_CLARIFICATION' | 'WEB_SEARCH';
+    reasoning: string;
+    message?: string;
+  }> {
     const model = this.genAI.getGenerativeModel({
       model: 'gemini-2.5-flash-lite',
-      generationConfig: { responseMimeType: "application/json" }
+      generationConfig: { responseMimeType: 'application/json' },
     });
 
     const contextWithIds = contextChunks
@@ -315,27 +339,35 @@ export class AiService {
     }
   }
 
-  async performWebSearch(query: string): Promise<Array<{title: string, snippet: string}>> {
+  async performWebSearch(
+    query: string,
+  ): Promise<Array<{ title: string; snippet: string }>> {
     try {
-      const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-      });
-      
+      const response = await fetch(
+        `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+        {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          },
+        },
+      );
+
       const html = await response.text();
       const $ = cheerio.load(html);
-      
-      const results: Array<{title: string, snippet: string}> = [];
-      
-      $('.result').slice(0, 5).each((i, el) => {
-        const title = $(el).find('.result__title').text().trim();
-        const snippet = $(el).find('.result__snippet').text().trim();
-        if (title && snippet) {
-          results.push({ title, snippet });
-        }
-      });
-      
+
+      const results: Array<{ title: string; snippet: string }> = [];
+
+      $('.result')
+        .slice(0, 5)
+        .each((i, el) => {
+          const title = $(el).find('.result__title').text().trim();
+          const snippet = $(el).find('.result__snippet').text().trim();
+          if (title && snippet) {
+            results.push({ title, snippet });
+          }
+        });
+
       return results;
     } catch (error) {
       console.error('Web search error:', error);
@@ -346,14 +378,22 @@ export class AiService {
   async calculateConfidenceScore(
     question: string,
     answer: string,
-    contextChunks: Array<{ id: string; sourceId: string; text: string; title?: string }>,
+    contextChunks: Array<{
+      id: string;
+      sourceId: string;
+      text: string;
+      title?: string;
+    }>,
   ): Promise<{ score: number; reasoning: string }> {
     const model = this.genAI.getGenerativeModel({
       model: 'gemini-2.5-flash-lite',
     });
 
     const contextText = contextChunks
-      .map((c) => `[${c.sourceId}:${c.id}] ${c.title ? c.title + '\n' : ''}${c.text}`)
+      .map(
+        (c) =>
+          `[${c.sourceId}:${c.id}] ${c.title ? c.title + '\n' : ''}${c.text}`,
+      )
       .join('\n\n---\n\n');
 
     const prompt = `
@@ -366,7 +406,7 @@ export class AiService {
       Your task is to evaluate how well the AI's answer is supported by the context.
       - Does the answer contain hallucinations (facts not present in the context)?
       - Does the answer directly address the question using only the provided context?
-      
+
       Score the answer from 0 to 100, where:
       - 90-100: Perfectly grounded in the context.
       - 70-89: Mostly grounded, but might contain minor extrapolations or miss some nuances.
@@ -378,7 +418,7 @@ export class AiService {
       - "reasoning": A brief explanation of why this score was given (1-2 sentences).
 
       Question: ${question}
-      
+
       Context:
       ${contextText}
 
@@ -399,11 +439,17 @@ export class AiService {
       return JSON.parse(responseText);
     } catch (e) {
       console.error('Failed to calculate confidence score', e);
-      return { score: 50, reasoning: 'Failed to calculate confidence score due to an internal error.' };
+      return {
+        score: 50,
+        reasoning:
+          'Failed to calculate confidence score due to an internal error.',
+      };
     }
   }
 
-  async generateChatTitle(messages: Array<{ role: string; content: string }>): Promise<string> {
+  async generateChatTitle(
+    messages: Array<{ role: string; content: string }>,
+  ): Promise<string> {
     const model = this.genAI.getGenerativeModel({
       model: 'gemini-2.5-flash-lite',
     });
@@ -432,4 +478,3 @@ export class AiService {
     }
   }
 }
-

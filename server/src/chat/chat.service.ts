@@ -7,6 +7,7 @@ import {
   DocumentDocument,
   DocumentItem,
 } from '../document/schemas/document.schema';
+import { toObjectId } from '../utils/object-id.util';
 import { VectorService } from '../vector/vector.service';
 import {
   WebsiteDocument,
@@ -36,13 +37,13 @@ export class ChatService {
 
   async createSession(userId: string): Promise<ChatSessionDocument> {
     return new this.chatSessionModel({
-      userId: new Types.ObjectId(userId),
+      userId: toObjectId(userId),
     }).save();
   }
 
   async getSessions(userId: string): Promise<ChatSession[]> {
     return this.chatSessionModel
-      .find({ userId: new Types.ObjectId(userId) })
+      .find({ userId: toObjectId(userId) })
       .sort({ createdAt: -1 })
       .exec();
   }
@@ -58,16 +59,11 @@ export class ChatService {
   }> {
     this.logger.log(`[Chat ${chatId}] Processing question: "${question}"`);
     const session = await this.ensureOwnership(chatId, userId);
+    const chatObjectId = toObjectId(chatId);
 
-    // 1. Save user question
     this.logger.debug(`[Chat ${chatId}] Step 1: Saving user question`);
-    await new this.messageModel({
-      chatId: new Types.ObjectId(chatId),
-      role: 'user',
-      content: question,
-    }).save();
+    await this.saveMessage(chatObjectId, 'user', question);
 
-    // 1.5. Semantic Cache Lookup
     this.logger.debug(`[Chat ${chatId}] Step 1.5: Checking semantic cache`);
     const questionEmbedding = await this.aiService.generateEmbedding(question);
     const cachedResponse = await this.semanticCache.findSimilarResponse(
@@ -83,47 +79,129 @@ export class ChatService {
         confidenceReasoning: cachedResponse.confidenceReasoning,
       };
 
-      // Save bot answer to message history
-      await new this.messageModel({
-        chatId: new Types.ObjectId(chatId),
-        role: 'bot',
-        content: response.answer,
-        confidenceScore: response.confidenceScore,
-        confidenceReasoning: response.confidenceReasoning,
-      }).save();
+      await this.saveMessage(
+        chatObjectId,
+        'bot',
+        response.answer,
+        response.confidenceScore,
+        response.confidenceReasoning,
+      );
 
       return response;
     }
 
-    // 2. Query Rewriting Layer: Rewrite query into 3 optimized queries
     this.logger.debug(`[Chat ${chatId}] Step 2: Rewriting query`);
     const queryRewrite = await this.aiService.rewriteQuery(question);
 
-    // 3. Run vector search for all 3 rewritten queries (parallelized)
+    const rerankedMatches = await this.retrieveAndRankMatches(
+      chatId,
+      question,
+      queryRewrite.rewrittenQueries,
+    );
+
+    this.logger.debug(`[Chat ${chatId}] Step 5: Preparing context chunks`);
+    let contextChunks = this.buildContextChunks(rerankedMatches);
+
+    const routingResult = await this.routeQuestion(question, contextChunks);
+    if (routingResult.action === 'ASK_CLARIFICATION') {
+      const botResponse =
+        routingResult.message || 'Could you please clarify your question?';
+      await this.saveMessage(chatObjectId, 'bot', botResponse);
+      return { answer: botResponse };
+    }
+
+    contextChunks = routingResult.contextChunks;
+
     this.logger.debug(
-      `[Chat ${chatId}] Step 3: Running parallel vector search for ${queryRewrite.rewrittenQueries.length} rewritten queries`,
+      `[Chat ${chatId}] Step 6: Generating answer with citations`,
+    );
+    const answerWithCitations =
+      await this.aiService.generateAnswerWithCitations(question, contextChunks);
+
+    this.logger.debug(`[Chat ${chatId}] Step 7: Formatting final answer`);
+    const formattedAnswer =
+      this.formatAnswerWithCitationsAndSnippets(answerWithCitations);
+
+    this.logger.debug(`[Chat ${chatId}] Step 8: Calculating confidence score`);
+    const confidence = await this.aiService.calculateConfidenceScore(
+      question,
+      formattedAnswer,
+      contextChunks,
+    );
+
+    this.logger.debug(`[Chat ${chatId}] Step 9: Saving bot answer`);
+    await this.saveMessage(
+      chatObjectId,
+      'bot',
+      formattedAnswer,
+      confidence.score,
+      confidence.reasoning,
+    );
+
+    this.logger.debug(`[Chat ${chatId}] Step 10: Saving to semantic cache`);
+    await this.semanticCache.save({
+      type: 'response',
+      chatId: chatObjectId,
+      input: question,
+      embedding: questionEmbedding,
+      answer: formattedAnswer,
+      confidenceScore: confidence.score,
+      confidenceReasoning: confidence.reasoning,
+    });
+
+    if (session.title === 'New Chat') {
+      await this.generateChatTitleIfDefault(chatObjectId, chatId);
+    }
+
+    this.logger.log(`[Chat ${chatId}] Request completed successfully`);
+    return {
+      answer: formattedAnswer,
+      confidenceScore: confidence.score,
+      confidenceReasoning: confidence.reasoning,
+    };
+  }
+
+  private async saveMessage(
+    chatObjectId: Types.ObjectId,
+    role: 'user' | 'bot',
+    content: string,
+    confidenceScore?: number,
+    confidenceReasoning?: string,
+  ) {
+    return new this.messageModel({
+      chatId: chatObjectId,
+      role,
+      content,
+      confidenceScore,
+      confidenceReasoning,
+    }).save();
+  }
+
+  private async retrieveAndRankMatches(
+    chatId: string,
+    question: string,
+    rewrittenQueries: string[],
+  ): Promise<any[]> {
+    this.logger.debug(
+      `[Chat ${chatId}] Step 3: Running parallel vector search for ${rewrittenQueries.length} rewritten queries`,
     );
     const retrievalStartTime = Date.now();
 
-    const embeddingPromises = queryRewrite.rewrittenQueries.map(
-      async (rewrittenQuery) => {
+    const searchResults = await Promise.all(
+      rewrittenQueries.map(async (rewrittenQuery) => {
         try {
           const embedding =
             await this.aiService.generateEmbedding(rewrittenQuery);
-          const matches = await this.vectorService.query(embedding, 5, {
-            chatId,
-          });
-          return matches;
-        } catch (error) {
+          return await this.vectorService.query(embedding, 5, { chatId });
+        } catch (error: any) {
           this.logger.warn(
             `[Chat ${chatId}] Failed to process rewritten query "${rewrittenQuery}": ${error.message}`,
           );
-          return []; // Return empty array on failure to continue with other queries
+          return [];
         }
-      },
+      }),
     );
 
-    const searchResults = await Promise.all(embeddingPromises);
     const allMatches = searchResults.flat();
     const retrievalTime = Date.now() - retrievalStartTime;
 
@@ -137,18 +215,14 @@ export class ChatService {
     );
     const uniqueMatches = this.mergeAndDeduplicateMatches(allMatches);
 
-    // 4.5. Re-rank the deduplicated matches using Cohere
     this.logger.debug(
       `[Chat ${chatId}] Step 4.5: Re-ranking ${uniqueMatches.length} matches with Cohere`,
     );
-    const rerankedMatches = await this.aiService.rerankChunks(
-      question,
-      uniqueMatches,
-    );
+    return this.aiService.rerankChunks(question, uniqueMatches);
+  }
 
-    // 5. Prepare context chunks with IDs for citation
-    this.logger.debug(`[Chat ${chatId}] Step 5: Preparing context chunks`);
-    const contextChunks: any[] = rerankedMatches
+  private buildContextChunks(rerankedMatches: any[]): any[] {
+    return rerankedMatches
       .map((match, index) => ({
         id: match.id || `chunk_${index}`,
         sourceId:
@@ -160,119 +234,81 @@ export class ChatService {
         title: match.metadata?.source || match.metadata?.title || '',
       }))
       .filter((chunk) => chunk.text);
+  }
 
-    // 5.5. Agentic Routing Layer
+  private async routeQuestion(
+    question: string,
+    contextChunks: any[],
+  ): Promise<{
+    action: 'ANSWER' | 'ASK_CLARIFICATION';
+    contextChunks: any[];
+    message?: string;
+  }> {
     this.logger.debug(
-      `[Chat ${chatId}] Step 5.5: Evaluating context sufficiency (Agentic Routing)`,
+      `[Chat] Step 5.5: Evaluating context sufficiency (Agentic Routing)`,
     );
     const evaluation = await this.aiService.evaluateContext(
       question,
       contextChunks,
     );
     this.logger.log(
-      `[Chat ${chatId}] Routing Action: ${evaluation.action} - ${evaluation.reasoning}`,
+      `[Chat] Routing Action: ${evaluation.action} - ${evaluation.reasoning}`,
     );
 
     if (evaluation.action === 'ASK_CLARIFICATION') {
-      this.logger.debug(
-        `[Chat ${chatId}] Asking for clarification: ${evaluation.message}`,
-      );
-      const botResponse =
-        evaluation.message || 'Could you please clarify your question?';
-      await new this.messageModel({
-        chatId: new Types.ObjectId(chatId),
-        role: 'bot',
-        content: botResponse,
-      }).save();
-      return { answer: botResponse };
+      return {
+        action: 'ASK_CLARIFICATION',
+        contextChunks,
+        message:
+          evaluation.message || 'Could you please clarify your question?',
+      };
     }
 
     if (evaluation.action === 'WEB_SEARCH') {
       this.logger.debug(
-        `[Chat ${chatId}] Performing web search for: ${evaluation.message}`,
+        `[Chat] Performing web search for: ${evaluation.message}`,
       );
       const searchQuery = evaluation.message || question;
       const webResults = await this.aiService.performWebSearch(searchQuery);
 
-      // We append web results as individual chunks
       if (webResults && webResults.length > 0) {
-        webResults.forEach((res, idx) => {
-          contextChunks.push({
-            id: `Web_${idx}`,
-            sourceId: 'WebSearch',
-            text: `Title: ${res.title}\nInformation: ${res.snippet}`,
-            title: res.title,
-          });
-        });
+        const enrichedChunks = webResults.map((res, idx) => ({
+          id: `Web_${idx}`,
+          sourceId: 'WebSearch',
+          text: `Title: ${res.title}\nInformation: ${res.snippet}`,
+          title: res.title,
+        }));
         this.logger.debug(
-          `[Chat ${chatId}] Appended ${webResults.length} web search results to context`,
+          `[Chat] Appended ${webResults.length} web search results to context`,
         );
+        return {
+          action: 'ANSWER',
+          contextChunks: [...contextChunks, ...enrichedChunks],
+        };
       }
     }
 
-    // 6. Generate answer with citations
-    this.logger.debug(
-      `[Chat ${chatId}] Step 6: Generating answer with citations`,
-    );
-    const answerWithCitations =
-      await this.aiService.generateAnswerWithCitations(question, contextChunks);
+    return { action: 'ANSWER', contextChunks };
+  }
 
-    // 7. Format the final answer with citations and snippets
-    this.logger.debug(`[Chat ${chatId}] Step 7: Formatting final answer`);
-    const formattedAnswer =
-      this.formatAnswerWithCitationsAndSnippets(answerWithCitations);
+  private async generateChatTitleIfDefault(
+    chatObjectId: Types.ObjectId,
+    chatId: string,
+  ) {
+    const messages = await this.messageModel
+      .find({ chatId: chatObjectId })
+      .sort({ createdAt: 1 })
+      .exec();
 
-    // 8. Calculate Confidence Score
-    this.logger.debug(`[Chat ${chatId}] Step 8: Calculating confidence score`);
-    const confidence = await this.aiService.calculateConfidenceScore(
-      question,
-      formattedAnswer,
-      contextChunks,
-    );
-
-    // 9. Save bot answer
-    this.logger.debug(`[Chat ${chatId}] Step 9: Saving bot answer`);
-    await new this.messageModel({
-      chatId: new Types.ObjectId(chatId),
-      role: 'bot',
-      content: formattedAnswer,
-      confidenceScore: confidence.score,
-      confidenceReasoning: confidence.reasoning,
-    }).save();
-
-    // 10. Save to Semantic Cache
-    this.logger.debug(`[Chat ${chatId}] Step 10: Saving to semantic cache`);
-    await this.semanticCache.save({
-      type: 'response',
-      chatId: new Types.ObjectId(chatId),
-      input: question,
-      embedding: questionEmbedding,
-      answer: formattedAnswer,
-      confidenceScore: confidence.score,
-      confidenceReasoning: confidence.reasoning,
-    });
-
-    // Generate chat title if it's still default
-    if (session.title === 'New Chat') {
-      const messages = await this.messageModel
-        .find({ chatId: new Types.ObjectId(chatId) })
-        .sort({ createdAt: 1 })
-        .exec();
-      if (messages.length >= 2) {
-        // At least user question and bot answer
-        const title = await this.aiService.generateChatTitle(
-          messages.map((m) => ({ role: m.role, content: m.content })),
-        );
-        await this.chatSessionModel.findByIdAndUpdate(chatId, { title });
-      }
+    if (messages.length < 2) {
+      return;
     }
 
-    this.logger.log(`[Chat ${chatId}] Request completed successfully`);
-    return {
-      answer: formattedAnswer,
-      confidenceScore: confidence.score,
-      confidenceReasoning: confidence.reasoning,
-    };
+    const title = await this.aiService.generateChatTitle(
+      messages.map((m) => ({ role: m.role, content: m.content })),
+    );
+
+    await this.chatSessionModel.findByIdAndUpdate(chatId, { title });
   }
 
   private mergeAndDeduplicateMatches(matches: any[]): any[] {
@@ -355,7 +391,7 @@ export class ChatService {
   async getHistory(chatId: string, userId: string): Promise<Message[]> {
     await this.ensureOwnership(chatId, userId);
     return this.messageModel
-      .find({ chatId: new Types.ObjectId(chatId) })
+      .find({ chatId: toObjectId(chatId) })
       .sort({ createdAt: 1 })
       .exec();
   }
@@ -365,8 +401,8 @@ export class ChatService {
     userId: string,
   ): Promise<{ deleted: boolean }> {
     const session = await this.chatSessionModel.findOneAndDelete({
-      _id: new Types.ObjectId(chatId),
-      userId: new Types.ObjectId(userId),
+      _id: toObjectId(chatId),
+      userId: toObjectId(userId),
     });
 
     if (!session) {
@@ -374,15 +410,9 @@ export class ChatService {
     }
 
     await Promise.all([
-      this.messageModel
-        .deleteMany({ chatId: new Types.ObjectId(chatId) })
-        .exec(),
-      this.documentModel
-        .deleteMany({ chatId: new Types.ObjectId(chatId) })
-        .exec(),
-      this.websiteModel
-        .deleteMany({ chatId: new Types.ObjectId(chatId) })
-        .exec(),
+      this.messageModel.deleteMany({ chatId: toObjectId(chatId) }).exec(),
+      this.documentModel.deleteMany({ chatId: toObjectId(chatId) }).exec(),
+      this.websiteModel.deleteMany({ chatId: toObjectId(chatId) }).exec(),
       this.vectorService.deleteByChatId(chatId),
     ]);
 
@@ -394,8 +424,8 @@ export class ChatService {
     userId: string,
   ): Promise<ChatSessionDocument> {
     const session = await this.chatSessionModel.findOne({
-      _id: new Types.ObjectId(chatId),
-      userId: new Types.ObjectId(userId),
+      _id: toObjectId(chatId),
+      userId: toObjectId(userId),
     });
 
     if (!session) {

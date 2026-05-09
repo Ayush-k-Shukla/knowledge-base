@@ -1,11 +1,12 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model } from 'mongoose';
 import { AiService } from '../ai/ai.service';
 import {
   ChatSession,
   ChatSessionDocument,
 } from '../chat/schemas/chat-session.schema';
+import { toObjectId } from '../utils/object-id.util';
 import { VectorService } from '../vector/vector.service';
 import { DocumentDocument, DocumentItem } from './schemas/document.schema';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -95,10 +96,10 @@ export class DocumentService {
 
     // Save metadata to MongoDB
     await this.documentModel.findOneAndUpdate(
-      { filename: file.originalname, chatId: new Types.ObjectId(chatId) },
+      { filename: file.originalname, chatId: toObjectId(chatId) },
       {
         filename: file.originalname,
-        chatId: new Types.ObjectId(chatId),
+        chatId: toObjectId(chatId),
         uploadedAt: new Date(),
       },
       { upsert: true, new: true },
@@ -108,15 +109,15 @@ export class DocumentService {
   async findAll(chatId: string, userId: string): Promise<DocumentItem[]> {
     await this.ensureOwnership(chatId, userId);
     return this.documentModel
-      .find({ chatId: new Types.ObjectId(chatId) })
+      .find({ chatId: toObjectId(chatId) })
       .sort({ uploadedAt: -1 })
       .exec();
   }
 
   private async ensureOwnership(chatId: string, userId: string) {
     const session = await this.chatSessionModel.findOne({
-      _id: new Types.ObjectId(chatId),
-      userId: new Types.ObjectId(userId),
+      _id: toObjectId(chatId),
+      userId: toObjectId(userId),
     });
 
     if (!session) {

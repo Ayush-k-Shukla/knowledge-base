@@ -1,12 +1,13 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import * as cheerio from 'cheerio';
-import { Model, Types } from 'mongoose';
+import { Model } from 'mongoose';
 import { AiService } from '../ai/ai.service';
 import {
   ChatSession,
   ChatSessionDocument,
 } from '../chat/schemas/chat-session.schema';
+import { toObjectId } from '../utils/object-id.util';
 import { VectorService } from '../vector/vector.service';
 import { WebsiteDocument, WebsiteItem } from './schemas/website.schema';
 
@@ -136,10 +137,10 @@ export class WebsiteService {
 
     // Persist to MongoDB
     await this.websiteModel.findOneAndUpdate(
-      { url: startUrl, chatId: new Types.ObjectId(chatId) },
+      { url: startUrl, chatId: toObjectId(chatId) },
       {
         url: startUrl,
-        chatId: new Types.ObjectId(chatId),
+        chatId: toObjectId(chatId),
         title: siteTitle || startUrl,
         pageCount,
         indexedAt: new Date(),
@@ -153,15 +154,15 @@ export class WebsiteService {
   async findAll(chatId: string, userId: string): Promise<WebsiteItem[]> {
     await this.ensureOwnership(chatId, userId);
     return this.websiteModel
-      .find({ chatId: new Types.ObjectId(chatId) })
+      .find({ chatId: toObjectId(chatId) })
       .sort({ indexedAt: -1 })
       .exec();
   }
 
   private async ensureOwnership(chatId: string, userId: string) {
     const session = await this.chatSessionModel.findOne({
-      _id: new Types.ObjectId(chatId),
-      userId: new Types.ObjectId(userId),
+      _id: toObjectId(chatId),
+      userId: toObjectId(userId),
     });
 
     if (!session) {

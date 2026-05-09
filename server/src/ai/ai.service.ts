@@ -83,7 +83,9 @@ export class AiService {
         return persistent.embedding;
       }
     } catch (e) {
-      this.logger.warn(`Failed to check persistent embedding cache: ${e.message}`);
+      this.logger.warn(
+        `Failed to check persistent embedding cache: ${e.message}`,
+      );
     }
 
     // 3. Generate new embedding
@@ -99,18 +101,21 @@ export class AiService {
     const embedding = result.embedding.values;
 
     const generationTime = Date.now() - startTime;
-    this.logger.debug(
-      `Generated embedding in ${generationTime}ms`,
-    );
+    this.logger.debug(`Generated embedding in ${generationTime}ms`);
 
     // 4. Check for semantic match (if we have a close enough match, we could use that instead,
     // but usually with embeddings we want the exact one.
     // However, the user asked for semantic cache for embeddings too)
-    const similarEmbedding = await this.semanticCache.findSimilarEmbedding(text, embedding);
+    const similarEmbedding = await this.semanticCache.findSimilarEmbedding(
+      text,
+      embedding,
+    );
     const finalEmbedding = similarEmbedding || embedding;
 
     if (similarEmbedding) {
-      this.logger.debug(`[MONGO Embedding Cache] SEMANTIC HIT! Reusing similar embedding.`);
+      this.logger.debug(
+        `[MONGO Embedding Cache] SEMANTIC HIT! Reusing similar embedding.`,
+      );
     }
 
     // 5. Cache the result in memory and persistently
@@ -374,25 +379,6 @@ export class AiService {
       .sort((a, b) => b.score - a.score)
       .slice(0, 2)
       .map((s) => s.sentence);
-  }
-
-  // Keep the old method for backward compatibility
-  async generateAnswer(prompt: string, context: string): Promise<string> {
-    const model = this.genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash-lite',
-    });
-    const fullPrompt = `
-      You are a helpful assistant. Use the following context to answer the user's question.
-      If the context doesn't contain the answer, say you don't know based on the documents provided.
-
-      CONTEXT:
-      ${context}
-
-      QUESTION:
-      ${prompt}
-    `;
-    const result = await model.generateContent(fullPrompt);
-    return result.response.text();
   }
 
   async evaluateContext(

@@ -7,6 +7,8 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
 
+  validateRequiredEnv(configService);
+
   // Enable CORS
   app.enableCors();
 
@@ -27,4 +29,25 @@ async function bootstrap() {
   console.log(`Application is running on: ${url}`);
   console.log(`Swagger documentation: ${url}/api`);
 }
+
+function validateRequiredEnv(configService: ConfigService) {
+  const requiredKeys = ['GEMINI_API_KEY', 'PINECONE_API_KEY', 'MONGODB_URI'];
+  const missingKeys = requiredKeys.filter(
+    (key) => !configService.get<string>(key),
+  );
+
+  if (missingKeys.length > 0) {
+    console.error(
+      `Missing required environment variable(s): ${missingKeys.join(', ')}`,
+    );
+    process.exit(1);
+  }
+
+  if (!configService.get<string>('COHERE_API_KEY')) {
+    console.warn(
+      'Warning: COHERE_API_KEY is not configured. Chunk reranking will be skipped.',
+    );
+  }
+}
+
 bootstrap();

@@ -12,6 +12,11 @@ import { ChatService } from './chat.service';
 import { ChatSession, ChatSessionSchema } from './schemas/chat-session.schema';
 import { Message, MessageSchema } from './schemas/message.schema';
 
+import {
+  SemanticCache,
+  SemanticCacheSchema,
+} from '../ai/schemas/semantic-cache.schema';
+
 @Module({
   imports: [
     MongooseModule.forFeature([
@@ -19,6 +24,7 @@ import { Message, MessageSchema } from './schemas/message.schema';
       { name: ChatSession.name, schema: ChatSessionSchema },
       { name: DocumentItem.name, schema: DocumentSchema },
       { name: WebsiteItem.name, schema: WebsiteSchema },
+      { name: SemanticCache.name, schema: SemanticCacheSchema },
     ]),
     AiModule,
     VectorModule,

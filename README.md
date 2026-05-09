@@ -21,6 +21,7 @@ Key features:
 - Document upload support for PDF and plain text files
 - Website crawling and indexing for live URL sources
 - Semantic embeddings stored in Pinecone
+- **Semantic Caching** for embeddings and LLM responses in MongoDB
 - Question answering backed by retrieved context with citations
 - Swagger API documentation for the backend
 
@@ -52,6 +53,9 @@ flowchart TD
     DocSvc --> VecSvc[Vector Service]
     WebSvc --> VecSvc
     ChatSvc --> AiSvc[AI Service]
+    ChatSvc --> CacheSvc[Semantic Cache Service]
+    AiSvc --> CacheSvc
+    CacheSvc --> Mongo
     AiSvc -->|Embeddings / generation| LLM[Google Gemini / Cohere]
     VecSvc -->|upsert/query| Pinecone
   end
@@ -81,23 +85,27 @@ flowchart TD
 ```mermaid
 flowchart TD
     A[User asks question] --> B[Save question<br>to MongoDB]
-    B --> C[Rewrite query<br>into 3 versions]
-    C --> D[For each rewritten<br>query:]
-    D --> E[Generate embedding]
-    E --> F[Query Pinecone<br>for top matches]
-    F --> G[Merge and<br>deduplicate results]
-    G --> H[Rerank matches<br>with Cohere]
-    H --> I[Evaluate context<br>sufficiency]
-    I --> J{Action?}
-    J -->|Clarify| K[Ask for<br>clarification]
-    J -->|Web Search| L[Perform web search,<br>append results]
-    J -->|Proceed| M[Generate answer<br>with citations]
-    K --> N[Return clarification<br>message]
-    L --> M
-    M --> O[Format answer with<br>citations and snippets]
-    O --> P[Calculate confidence<br>score]
-    P --> Q[Save answer<br>to MongoDB]
-    Q --> R[Return answer<br>to user]
+    B --> C[Generate embedding]
+    C --> D[Check Semantic Cache<br>for similar question]
+    D --> E{Cache Hit?}
+    E -->|Yes| F[Return cached<br>answer]
+    E -->|No| G[Rewrite query<br>into 3 versions]
+    G --> H[For each rewritten<br>query:]
+    H --> I[Generate embedding]
+    I --> J[Query Pinecone<br>for top matches]
+    J --> K[Merge and<br>deduplicate results]
+    K --> L[Rerank matches<br>with Cohere]
+    L --> M[Evaluate context<br>sufficiency]
+    M --> N{Action?}
+    N -->|Clarify| O[Ask for<br>clarification]
+    N -->|Web Search| P[Perform web search,<br>append results]
+    N -->|Proceed| Q[Generate answer<br>with citations]
+    O --> R[Return clarification<br>message]
+    P --> Q
+    Q --> S[Format answer with<br>citations and snippets]
+    S --> T[Calculate confidence<br>score]
+    T --> U[Save answer and<br>cache result]
+    U --> V[Return answer<br>to user]
 ```
 
 **Note on Clarification Flow**: If the system determines that the question lacks sufficient context or is unclear, it will ask for clarification. In this case, the bot responds with a clarification request, and the conversation ends for that question. The user can then provide more details in a follow-up question, which will restart the flow with improved context.
@@ -204,7 +212,7 @@ http://localhost:5173
 
 - `client/` — React + Vite UI
 - `server/` — NestJS API and RAG backend
-- `server/src/ai/` — AI integrations and prompt logic
+- `server/src/ai/` — AI integrations, prompt logic, and semantic cache
 - `server/src/vector/` — Pinecone vector storage
 - `server/src/document/` — PDF/text upload and storage
 - `server/src/website/` — URL crawling and website indexing

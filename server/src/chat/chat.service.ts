@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { SemanticCacheService } from 'src/ai/semantic-cache.service';
 import { AiService, AnswerWithCitations } from '../ai/ai.service';
 import {
   DocumentDocument,
@@ -30,6 +31,7 @@ export class ChatService {
     @InjectModel(DocumentItem.name)
     private documentModel: Model<DocumentDocument>,
     @InjectModel(WebsiteItem.name) private websiteModel: Model<WebsiteDocument>,
+    private semanticCache: SemanticCacheService,
   ) {}
 
   async createSession(userId: string): Promise<ChatSessionDocument> {
@@ -64,6 +66,34 @@ export class ChatService {
       role: 'user',
       content: question,
     }).save();
+
+    // 1.5. Semantic Cache Lookup
+    this.logger.debug(`[Chat ${chatId}] Step 1.5: Checking semantic cache`);
+    const questionEmbedding = await this.aiService.generateEmbedding(question);
+    const cachedResponse = await this.semanticCache.findSimilarResponse(
+      chatId,
+      questionEmbedding,
+    );
+
+    if (cachedResponse) {
+      this.logger.log(`[Chat ${chatId}] Semantic Cache HIT! Reusing answer.`);
+      const response = {
+        answer: cachedResponse.output.answer,
+        confidenceScore: cachedResponse.confidenceScore,
+        confidenceReasoning: cachedResponse.confidenceReasoning,
+      };
+
+      // Save bot answer to message history
+      await new this.messageModel({
+        chatId: new Types.ObjectId(chatId),
+        role: 'bot',
+        content: response.answer,
+        confidenceScore: response.confidenceScore,
+        confidenceReasoning: response.confidenceReasoning,
+      }).save();
+
+      return response;
+    }
 
     // 2. Query Rewriting Layer: Rewrite query into 3 optimized queries
     this.logger.debug(`[Chat ${chatId}] Step 2: Rewriting query`);
@@ -209,6 +239,18 @@ export class ChatService {
       confidenceScore: confidence.score,
       confidenceReasoning: confidence.reasoning,
     }).save();
+
+    // 10. Save to Semantic Cache
+    this.logger.debug(`[Chat ${chatId}] Step 10: Saving to semantic cache`);
+    await this.semanticCache.save({
+      type: 'response',
+      chatId: new Types.ObjectId(chatId),
+      input: question,
+      embedding: questionEmbedding,
+      output: { answer: formattedAnswer },
+      confidenceScore: confidence.score,
+      confidenceReasoning: confidence.reasoning,
+    });
 
     // Generate chat title if it's still default
     if (session.title === 'New Chat') {

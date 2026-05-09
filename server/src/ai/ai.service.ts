@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as cheerio from 'cheerio';
 import { CohereClientV2 } from 'cohere-ai';
+import { SemanticCacheService } from './semantic-cache.service';
 
 export interface QueryRewrite {
   originalQuery: string;
@@ -41,7 +42,10 @@ export class AiService {
   private readonly WEB_CACHE_TTL = 1000 * 60 * 5; // 5 minutes for web search
   private readonly MAX_WEB_CACHE_SIZE = 100;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private semanticCache: SemanticCacheService,
+  ) {
     const apiKey = this.configService.get<string>('GEMINI_API_KEY')!;
     this.genAI = new GoogleGenerativeAI(apiKey);
 
@@ -52,15 +56,37 @@ export class AiService {
   }
 
   async generateEmbedding(text: string): Promise<number[]> {
-    // Check cache first
+    // 1. Check in-memory cache first (exact match)
     const cached = this.embeddingCache.get(text);
     if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
       this.logger.debug(
-        `[Embedding Cache] HIT for text (${text.substring(0, 50)}...)`,
+        `[Embedding Cache] MEMORY HIT for text (${text.substring(0, 50)}...)`,
       );
       return cached.embedding;
     }
 
+    // 2. Check persistent cache (exact match by input text)
+    // We do this BEFORE calling the embedding model
+    try {
+      const persistent = await (this.semanticCache as any).cacheModel
+        .findOne({ type: 'embedding', input: text })
+        .exec();
+      if (persistent) {
+        this.logger.debug(
+          `[Embedding Cache] PERSISTENT HIT for text (${text.substring(0, 50)}...)`,
+        );
+        // Also update memory cache
+        this.embeddingCache.set(text, {
+          embedding: persistent.output,
+          timestamp: Date.now(),
+        });
+        return persistent.output;
+      }
+    } catch (e) {
+      this.logger.warn(`Failed to check persistent embedding cache: ${e.message}`);
+    }
+
+    // 3. Generate new embedding
     this.logger.debug(
       `[Embedding Cache] MISS for text (${text.substring(0, 50)}...) - generating new embedding`,
     );
@@ -77,20 +103,35 @@ export class AiService {
       `[Embedding Cache] Generated embedding in ${generationTime}ms`,
     );
 
-    // Cache the result
-    this.embeddingCache.set(text, { embedding, timestamp: Date.now() });
+    // 4. Check for semantic match (if we have a close enough match, we could use that instead,
+    // but usually with embeddings we want the exact one.
+    // However, the user asked for semantic cache for embeddings too)
+    const similarEmbedding = await this.semanticCache.findSimilarEmbedding(text, embedding);
+    const finalEmbedding = similarEmbedding || embedding;
 
-    // Clean up old cache entries periodically (more aggressive cleanup)
-    if (this.embeddingCache.size > this.MAX_CACHE_SIZE) {
-      const beforeSize = this.embeddingCache.size;
-      this.cleanEmbeddingCache();
-      const afterSize = this.embeddingCache.size;
-      this.logger.debug(
-        `[Embedding Cache] Cleaned up ${beforeSize - afterSize} entries. Cache size: ${afterSize}/${this.MAX_CACHE_SIZE}`,
-      );
+    if (similarEmbedding) {
+      this.logger.debug(`[Embedding Cache] SEMANTIC HIT! Reusing similar embedding.`);
     }
 
-    return embedding;
+    // 5. Cache the result in memory and persistently
+    this.embeddingCache.set(text, {
+      embedding: finalEmbedding,
+      timestamp: Date.now(),
+    });
+
+    await this.semanticCache.save({
+      type: 'embedding',
+      input: text,
+      embedding: finalEmbedding,
+      output: finalEmbedding,
+    });
+
+    // Clean up memory cache
+    if (this.embeddingCache.size > this.MAX_CACHE_SIZE) {
+      this.cleanEmbeddingCache();
+    }
+
+    return finalEmbedding;
   }
 
   private cleanEmbeddingCache(): void {

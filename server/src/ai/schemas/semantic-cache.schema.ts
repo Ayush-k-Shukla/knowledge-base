@@ -17,8 +17,8 @@ export class SemanticCache {
   @Prop({ type: [Number], required: true })
   embedding: number[]; // The embedding of the input text
 
-  @Prop({ type: Object, required: true })
-  output: any; // The answer object
+  @Prop()
+  answer?: string; // The cached answer (for type='response')
 
   @Prop()
   confidenceScore?: number;

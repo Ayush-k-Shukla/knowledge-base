@@ -21,7 +21,7 @@ Key features:
 - Document upload support for PDF and plain text files
 - Website crawling and indexing for live URL sources
 - Semantic embeddings stored in Pinecone
-- **Semantic Caching** for embeddings and LLM responses in MongoDB
+- **Semantic Caching** for embeddings and LLM responses in MongoDB (using Atlas Vector Search)
 - Question answering backed by retrieved context with citations
 - Swagger API documentation for the backend
 

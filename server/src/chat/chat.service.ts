@@ -78,7 +78,7 @@ export class ChatService {
     if (cachedResponse) {
       this.logger.log(`[Chat ${chatId}] Semantic Cache HIT! Reusing answer.`);
       const response = {
-        answer: cachedResponse.output.answer,
+        answer: cachedResponse.answer!,
         confidenceScore: cachedResponse.confidenceScore,
         confidenceReasoning: cachedResponse.confidenceReasoning,
       };
@@ -247,7 +247,7 @@ export class ChatService {
       chatId: new Types.ObjectId(chatId),
       input: question,
       embedding: questionEmbedding,
-      output: { answer: formattedAnswer },
+      answer: formattedAnswer,
       confidenceScore: confidence.score,
       confidenceReasoning: confidence.reasoning,
     });

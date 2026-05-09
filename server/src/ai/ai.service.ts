@@ -60,7 +60,7 @@ export class AiService {
     const cached = this.embeddingCache.get(text);
     if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
       this.logger.debug(
-        `[Embedding Cache] MEMORY HIT for text (${text.substring(0, 50)}...)`,
+        `[Local Embedding Cache] MEMORY HIT for text (${text.substring(0, 50)}...)`,
       );
       return cached.embedding;
     }
@@ -73,14 +73,14 @@ export class AiService {
         .exec();
       if (persistent) {
         this.logger.debug(
-          `[Embedding Cache] PERSISTENT HIT for text (${text.substring(0, 50)}...)`,
+          `[Mongo Embedding Cache] PERSISTENT HIT for text (${text.substring(0, 50)}...)`,
         );
         // Also update memory cache
         this.embeddingCache.set(text, {
-          embedding: persistent.output,
+          embedding: persistent.embedding,
           timestamp: Date.now(),
         });
-        return persistent.output;
+        return persistent.embedding;
       }
     } catch (e) {
       this.logger.warn(`Failed to check persistent embedding cache: ${e.message}`);
@@ -88,7 +88,7 @@ export class AiService {
 
     // 3. Generate new embedding
     this.logger.debug(
-      `[Embedding Cache] MISS for text (${text.substring(0, 50)}...) - generating new embedding`,
+      `[Both (MONGO + LOCAL) Embedding Cache] MISS for text (${text.substring(0, 50)}...) - generating new embedding`,
     );
     const startTime = Date.now();
 
@@ -100,7 +100,7 @@ export class AiService {
 
     const generationTime = Date.now() - startTime;
     this.logger.debug(
-      `[Embedding Cache] Generated embedding in ${generationTime}ms`,
+      `Generated embedding in ${generationTime}ms`,
     );
 
     // 4. Check for semantic match (if we have a close enough match, we could use that instead,
@@ -110,7 +110,7 @@ export class AiService {
     const finalEmbedding = similarEmbedding || embedding;
 
     if (similarEmbedding) {
-      this.logger.debug(`[Embedding Cache] SEMANTIC HIT! Reusing similar embedding.`);
+      this.logger.debug(`[MONGO Embedding Cache] SEMANTIC HIT! Reusing similar embedding.`);
     }
 
     // 5. Cache the result in memory and persistently
@@ -123,7 +123,6 @@ export class AiService {
       type: 'embedding',
       input: text,
       embedding: finalEmbedding,
-      output: finalEmbedding,
     });
 
     // Clean up memory cache

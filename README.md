@@ -2,12 +2,12 @@
 
 A full-stack Retrieval-Augmented Generation (RAG) proof-of-concept built with:
 
-- **React + Vite + TypeScript** frontend
-- **NestJS + TypeScript** backend
+- **React 19 + Vite + TypeScript** frontend with animations and markdown rendering
+- **NestJS + TypeScript** backend with Swagger API documentation
 - **MongoDB** for chat, document, website, and user persistence
-- **Pinecone** for vector embeddings and semantic retrieval
-- **Google Gemini** for embedding generation and answer synthesis
-- **Cohere** optional reranking and scoring
+- **Pinecone** for vector embeddings and semantic retrieval (3072-dimensional vectors)
+- **Google Gemini 1.5** (gemini-embedding-001 for embeddings, gemini-2.5-flash-lite for generation)
+- **Cohere** optional reranking (rerank-english-v3.0) and scoring
 - **PDF/text upload** and **website crawling** for multi-source knowledge ingestion
 
 ## What this project does
@@ -17,12 +17,14 @@ This app lets authenticated users upload documents and index websites into a sha
 Key features:
 
 - User registration and authentication with JWT
-- Chat session management and persistent history
+- Chat session management and persistent history with auto-generated titles
 - Document upload support for PDF and plain text files
 - Website crawling and indexing for live URL sources
-- Semantic embeddings stored in Pinecone
+- Semantic embeddings stored in Pinecone with multi-query expansion
 - **Semantic Caching** for embeddings and LLM responses in MongoDB (using Atlas Vector Search)
-- Question answering backed by retrieved context with citations
+- Question answering backed by retrieved context with citations and source snippets
+- **Agentic Routing** with clarification requests and web search fallback
+- **Confidence Scoring** for answer grounding evaluation
 - Swagger API documentation for the backend
 
 ## Architecture overview
@@ -82,10 +84,10 @@ flowchart TD
 
 ### Question Answering Flow
 
-```mermaid
+````mermaid
 flowchart TD
     A[User asks question] --> B[Save question<br>to MongoDB]
-    B --> C[Generate embedding]
+    B --> C[Generate embedding<br>for question]
     C --> D[Check Semantic Cache<br>for similar question]
     D --> E{Cache Hit?}
     E -->|Yes| F[Return cached<br>answer]
@@ -104,13 +106,10 @@ flowchart TD
     P --> Q
     Q --> S[Format answer with<br>citations and snippets]
     S --> T[Calculate confidence<br>score]
-    T --> U[Save answer and<br>cache result]
+    T --> U[Save answer to MongoDB<br>and cache result]
     U --> V[Return answer<br>to user]
-```
-
-**Note on Clarification Flow**: If the system determines that the question lacks sufficient context or is unclear, it will ask for clarification. In this case, the bot responds with a clarification request, and the conversation ends for that question. The user can then provide more details in a follow-up question, which will restart the flow with improved context.
-
-## Getting started
+    F --> V
+    R --> V
 
 ### Backend
 
@@ -118,7 +117,7 @@ flowchart TD
 
 ```bash
 cd server
-```
+````
 
 2. Install dependencies:
 
@@ -180,11 +179,46 @@ http://localhost:5173
 ## How to use it
 
 1. Register or login with an email and password.
-2. Create a new chat session or select an existing session.
+2. Create a new chat session or select an existing session (titles are auto-generated from conversations).
 3. Upload a PDF or text file using the drag-and-drop document uploader.
-4. Add a website URL to crawl and index its content.
+4. Add a website URL to crawl and index its content (supports up to 15 pages per site).
 5. Ask questions in the chat box to get answers generated from the uploaded documents and indexed webpages.
-6. The system returns answers with citations from the retrieved sources.
+6. The system returns answers with citations from the retrieved sources, confidence scores, and source snippets.
+7. If a question is unclear, the system may ask for clarification.
+8. If external knowledge is needed, the system can perform web searches to supplement answers.
+9. Chat sessions can be deleted using the trash icon next to each chat in the sidebar.
+
+## Advanced Features
+
+### Semantic Caching
+
+- **Embedding Cache**: Avoids redundant embedding API calls for identical text
+- **Response Cache**: Stores complete Q&A pairs for similar questions using semantic similarity
+- **Multi-level Caching**: In-memory LRU cache + persistent MongoDB storage with TTL
+
+### Agentic Routing
+
+- **Context Evaluation**: AI assesses if retrieved context is sufficient to answer questions
+- **Clarification Requests**: When questions are ambiguous, the system asks for clarification
+- **Web Search Fallback**: For questions requiring external knowledge, performs DuckDuckGo searches
+
+### Confidence Scoring
+
+- **Grounding Evaluation**: AI audits answers for factual accuracy and context reliance
+- **Visual Indicators**: Color-coded confidence badges (green ≥80%, yellow ≥50%, red <50%)
+- **Detailed Reasoning**: Hover tooltips explain confidence assessment
+
+### Multi-Query Expansion
+
+- **Query Rewriting**: Generates 3 optimized search queries from user input
+- **Parallel Retrieval**: Executes multiple vector searches simultaneously
+- **Deduplication**: Merges and removes duplicate results before reranking
+
+### Text Processing
+
+- **Chunking Strategy**: Documents and websites are split into 1000-character chunks with 200-character overlap
+- **PDF Processing**: Uses pdf-parse library for text extraction
+- **Website Crawling**: Follows same-origin links up to 15 pages per site
 
 ## Important endpoints used by the frontend
 
@@ -194,6 +228,7 @@ http://localhost:5173
 - `GET /chat/sessions`
 - `GET /chat/history/:chatId`
 - `POST /chat/ask/:chatId`
+- `DELETE /chat/:chatId`
 - `POST /document/upload/:chatId`
 - `GET /document/:chatId`
 - `POST /website/index/:chatId`
@@ -205,6 +240,10 @@ http://localhost:5173
 - Authentication uses a bearer token stored in browser local storage.
 - The app relies on external AI providers and Pinecone, so valid API keys and working connectivity are required.
 - Swagger docs are enabled for the Nest backend and can help explore available API routes.
+- Website crawling is limited to same-origin links and respects robots.txt (via fetch headers).
+- Semantic caching reduces API costs and improves response times for similar questions.
+- Confidence scores indicate how well answers are grounded in the provided context.
+- Agentic routing automatically handles clarification requests and web search fallbacks.
 
 ---
 

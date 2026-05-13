@@ -78,7 +78,7 @@ export class SemanticCacheService implements OnModuleInit {
           `Atlas Vector Search Index "${indexName}" already exists.`,
         );
       }
-    } catch (error) {
+    } catch (error: any) {
       this.logger.warn(
         `Could not automate Atlas Vector Index creation: ${error.message}. ` +
           'This is normal if you are not using MongoDB Atlas or lack administrative permissions. ' +
@@ -93,9 +93,15 @@ export class SemanticCacheService implements OnModuleInit {
     threshold: number = 0.9,
   ): Promise<SemanticCacheDocument | null> {
     const startTime = Date.now();
+    this.logger.debug(
+      `[SemanticCache] Searching similar response for chatId=${chatId}, threshold=${threshold}`,
+    );
 
     try {
       if (!this.isAtlas) {
+        this.logger.debug(
+          `[SemanticCache] Atlas not detected, falling back to manual similarity search for chatId=${chatId}`,
+        );
         return this.findSimilarResponseManual(
           chatId,
           queryEmbedding,
@@ -136,7 +142,7 @@ export class SemanticCacheService implements OnModuleInit {
         );
         return bestMatch as SemanticCacheDocument;
       }
-    } catch (error) {
+    } catch (error: any) {
       this.logger.warn(
         `MongoDB Vector Search failed, falling back to manual: ${error.message}`,
       );
@@ -152,6 +158,9 @@ export class SemanticCacheService implements OnModuleInit {
     queryEmbedding: number[],
     threshold: number,
   ): Promise<SemanticCacheDocument | null> {
+    this.logger.debug(
+      `[SemanticCache] Performing manual similarity scan for chatId=${chatId}`,
+    );
     const entries = await this.cacheModel
       .find({
         type: 'response',
@@ -171,6 +180,13 @@ export class SemanticCacheService implements OnModuleInit {
         bestMatch = entry;
       }
     }
+    if (bestMatch) {
+      this.logger.debug(
+        `[SemanticCache] Manual similarity found match score=${maxSimilarity.toFixed(4)}`,
+      );
+    } else {
+      this.logger.debug(`[SemanticCache] Manual similarity found no match`);
+    }
     return bestMatch;
   }
 
@@ -179,6 +195,9 @@ export class SemanticCacheService implements OnModuleInit {
     queryEmbedding: number[],
     threshold: number = 0.98,
   ): Promise<number[] | null> {
+    this.logger.debug(
+      `[SemanticCache] Searching for similar embedding (threshold=${threshold})`,
+    );
     try {
       if (!this.isAtlas) {
         throw new Error('Not on Atlas'); // Jump to fallback
@@ -239,7 +258,8 @@ export class SemanticCacheService implements OnModuleInit {
         );
       }
       await new this.cacheModel(data).save();
-    } catch (error) {
+      this.logger.debug(`Saved semantic cache entry of type=${data.type}`);
+    } catch (error: any) {
       this.logger.error(`Failed to save to semantic cache: ${error.message}`);
     }
   }

@@ -1,9 +1,10 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pinecone } from '@pinecone-database/pinecone';
 
 @Injectable()
 export class VectorService implements OnModuleInit {
+  private readonly logger = new Logger(VectorService.name);
   private pinecone: Pinecone;
   private indexName: string;
 
@@ -19,6 +20,9 @@ export class VectorService implements OnModuleInit {
   }
 
   async upsert(vectors: any[]) {
+    this.logger.debug(
+      `[Vector] Upserting ${vectors.length} vectors into index ${this.indexName}`,
+    );
     const index = this.pinecone.Index(this.indexName);
     // SDK 7.x requires an object with 'records'
     await index.upsert({ records: vectors });
@@ -29,6 +33,9 @@ export class VectorService implements OnModuleInit {
     topK: number = 5,
     filter?: Record<string, any>,
   ) {
+    this.logger.debug(
+      `[Vector] Querying index ${this.indexName} with topK=${topK} filter=${JSON.stringify(filter)}`,
+    );
     const index = this.pinecone.Index(this.indexName);
     const result = await index.query({
       vector,
@@ -36,10 +43,14 @@ export class VectorService implements OnModuleInit {
       filter,
       includeMetadata: true,
     });
+    this.logger.debug(
+      `[Vector] Query returned ${result.matches?.length ?? 0} matches`,
+    );
     return result.matches;
   }
 
   async deleteByChatId(chatId: string) {
+    this.logger.log(`[Vector] Deleting vectors for chatId=${chatId}`);
     const index = this.pinecone.Index(this.indexName);
     await index.deleteMany({ filter: { chatId } });
   }

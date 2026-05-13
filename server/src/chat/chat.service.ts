@@ -86,7 +86,7 @@ export class ChatService implements OnModuleInit {
           },
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       this.logger.warn(
         `Could not automate Atlas Search Index creation: ${error.message}`,
       );
@@ -94,16 +94,26 @@ export class ChatService implements OnModuleInit {
   }
 
   async createSession(userId: string): Promise<ChatSessionDocument> {
-    return new this.chatSessionModel({
+    this.logger.log(`[Chat] Creating new session for user ${userId}`);
+    const session = await new this.chatSessionModel({
       userId: toObjectId(userId),
     }).save();
+    this.logger.debug(
+      `[Chat] Created session ${session._id} for user ${userId}`,
+    );
+    return session;
   }
 
   async getSessions(userId: string): Promise<ChatSession[]> {
-    return this.chatSessionModel
+    this.logger.debug(`[Chat] Retrieving sessions for user ${userId}`);
+    const sessions = await this.chatSessionModel
       .find({ userId: toObjectId(userId) })
       .sort({ createdAt: -1 })
       .exec();
+    this.logger.debug(
+      `[Chat] Retrieved ${sessions.length} sessions for user ${userId}`,
+    );
+    return sessions;
   }
 
   async askQuestion(
@@ -159,6 +169,9 @@ export class ChatService implements OnModuleInit {
 
     this.logger.debug(`[Chat ${chatId}] Step 5: Preparing context chunks`);
     let contextChunks = this.buildContextChunks(rerankedMatches);
+    this.logger.debug(
+      `[Chat ${chatId}] Prepared ${contextChunks.length} context chunks for prompt generation`,
+    );
 
     const routingResult = await this.routeQuestion(question, contextChunks);
     if (routingResult.action === 'ASK_CLARIFICATION') {
@@ -226,6 +239,11 @@ export class ChatService implements OnModuleInit {
     confidenceScore?: number,
     confidenceReasoning?: string,
   ) {
+    this.logger.debug(
+      `[Chat ${chatObjectId}] Saving ${role} message (${
+        content.length
+      } chars, confidence=${confidenceScore ?? 'N/A'})`,
+    );
     return new this.messageModel({
       chatId: chatObjectId,
       role,
@@ -251,7 +269,13 @@ export class ChatService implements OnModuleInit {
         try {
           const embedding =
             await this.aiService.generateEmbedding(rewrittenQuery);
-          return await this.vectorService.query(embedding, 15, { chatId });
+          const result = await this.vectorService.query(embedding, 15, {
+            chatId,
+          });
+          this.logger.debug(
+            `[Chat ${chatId}] Vector search returned ${result.length} matches for rewritten query: "${rewrittenQuery}"`,
+          );
+          return result;
         } catch (error: any) {
           this.logger.warn(
             `[Chat ${chatId}] Vector search failed for query "${rewrittenQuery}": ${error.message}`,
@@ -265,7 +289,11 @@ export class ChatService implements OnModuleInit {
     const keywordSearchResults = await Promise.all(
       rewrittenQueries.map(async (rewrittenQuery) => {
         try {
-          return await this.keywordSearch(chatId, rewrittenQuery, 15);
+          const result = await this.keywordSearch(chatId, rewrittenQuery, 15);
+          this.logger.debug(
+            `[Chat ${chatId}] Keyword search returned ${result.length} matches for rewritten query: "${rewrittenQuery}"`,
+          );
+          return result;
         } catch (error: any) {
           this.logger.warn(
             `[Chat ${chatId}] Keyword search failed for query "${rewrittenQuery}": ${error.message}`,
@@ -349,7 +377,7 @@ export class ChatService implements OnModuleInit {
             ...res.metadata,
           },
         }));
-      } catch (error) {
+      } catch (error: any) {
         this.logger.warn(
           `Atlas Search failed, falling back to $text: ${error.message}`,
         );
@@ -589,17 +617,23 @@ export class ChatService implements OnModuleInit {
   }
 
   async getHistory(chatId: string, userId: string): Promise<Message[]> {
+    this.logger.debug(`[Chat ${chatId}] Fetching history for user ${userId}`);
     await this.ensureOwnership(chatId, userId);
-    return this.messageModel
+    const messages = await this.messageModel
       .find({ chatId: toObjectId(chatId) })
       .sort({ createdAt: 1 })
       .exec();
+    this.logger.debug(
+      `[Chat ${chatId}] Retrieved ${messages.length} messages from history`,
+    );
+    return messages;
   }
 
   async deleteSession(
     chatId: string,
     userId: string,
   ): Promise<{ deleted: boolean }> {
+    this.logger.log(`[Chat ${chatId}] Deleting session for user ${userId}`);
     const session = await this.chatSessionModel.findOneAndDelete({
       _id: toObjectId(chatId),
       userId: toObjectId(userId),
@@ -617,6 +651,7 @@ export class ChatService implements OnModuleInit {
       this.vectorService.deleteByChatId(chatId),
     ]);
 
+    this.logger.log(`[Chat ${chatId}] Deleted session and all associated data`);
     return { deleted: true };
   }
 
@@ -624,14 +659,21 @@ export class ChatService implements OnModuleInit {
     chatId: string,
     userId: string,
   ): Promise<ChatSessionDocument> {
+    this.logger.debug(
+      `[Chat ${chatId}] Verifying ownership for user ${userId}`,
+    );
     const session = await this.chatSessionModel.findOne({
       _id: toObjectId(chatId),
       userId: toObjectId(userId),
     });
 
     if (!session) {
+      this.logger.warn(
+        `[Chat ${chatId}] Ownership verification failed for user ${userId}`,
+      );
       throw new NotFoundException('Chat session not found');
     }
+    this.logger.debug(`[Chat ${chatId}] Ownership verified for user ${userId}`);
     return session;
   }
 }

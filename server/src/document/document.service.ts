@@ -32,7 +32,9 @@ export class DocumentService {
     file: Express.Multer.File,
     userId: string,
   ): Promise<void> {
+    this.logger.log(`[Document] Processing upload ${file.originalname} for chatId=${chatId} userId=${userId}`);
     await this.ensureOwnership(chatId, userId);
+    this.logger.debug(`[Document] Ownership verified for chatId=${chatId}`);
 
     const dataBuffer = file.buffer;
     let text = '';
@@ -112,6 +114,9 @@ export class DocumentService {
     }));
 
     await this.chunkModel.insertMany(mongoChunks);
+    this.logger.debug(
+      `[Document] Inserted ${mongoChunks.length} chunks for file ${file.originalname} into MongoDB`,
+    );
 
     // Save metadata to MongoDB
     await this.documentModel.findOneAndUpdate(
@@ -123,17 +128,21 @@ export class DocumentService {
       },
       { upsert: true, new: true },
     );
+    this.logger.log(`[Document] Completed processing ${file.originalname} for chatId=${chatId}`);
   }
 
   async findAll(chatId: string, userId: string): Promise<DocumentItem[]> {
+    this.logger.debug(`[Document] Retrieving documents for chatId=${chatId} userId=${userId}`);
     await this.ensureOwnership(chatId, userId);
-    return this.documentModel
+    const documents = await this.documentModel
       .find({ chatId: toObjectId(chatId) })
       .sort({ uploadedAt: -1 })
       .exec();
-  }
+    this.logger.debug(`[Document] Retrieved ${documents.length} documents for chatId=${chatId}`);
+    return documents;
 
   private async ensureOwnership(chatId: string, userId: string) {
+    this.logger.debug(`[Document] Verifying ownership chatId=${chatId} userId=${userId}`);
     const session = await this.chatSessionModel.findOne({
       _id: toObjectId(chatId),
       userId: toObjectId(userId),

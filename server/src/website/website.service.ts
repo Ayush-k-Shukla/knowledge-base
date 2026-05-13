@@ -7,10 +7,10 @@ import {
   ChatSession,
   ChatSessionDocument,
 } from '../chat/schemas/chat-session.schema';
+import { Chunk, ChunkDocument } from '../chat/schemas/chunk.schema';
 import { toObjectId } from '../utils/object-id.util';
 import { VectorService } from '../vector/vector.service';
 import { WebsiteDocument, WebsiteItem } from './schemas/website.schema';
-import { Chunk, ChunkDocument } from '../chat/schemas/chunk.schema';
 
 @Injectable()
 export class WebsiteService {
@@ -36,8 +36,12 @@ export class WebsiteService {
     maxPages: number = 5,
     userId?: string,
   ): Promise<{ pageCount: number; title: string }> {
+    this.logger.log(
+      `[Website] Starting indexing for chatId=${chatId} startUrl=${startUrl} depth=${depth} maxPages=${maxPages}`,
+    );
     if (userId) {
       await this.ensureOwnership(chatId, userId);
+      this.logger.debug(`[Website] Ownership verified for chatId=${chatId}`);
     }
 
     const origin = new URL(startUrl).origin;
@@ -135,6 +139,9 @@ export class WebsiteService {
 
         pageCount++;
         this.logger.log(`Indexed page ${pageCount}: ${url}`);
+        this.logger.debug(
+          `Queued ${queue.length} pages remaining at levels up to ${depth}`,
+        );
 
         // Enqueue same-origin links if we haven't hit the depth limit
         if (level < depth) {
@@ -153,6 +160,9 @@ export class WebsiteService {
       }
     }
 
+    this.logger.log(
+      `[Website] Completed crawl for startUrl=${startUrl}, pages indexed=${pageCount}`,
+    );
     // Persist to MongoDB
     await this.websiteModel.findOneAndUpdate(
       { url: startUrl, chatId: toObjectId(chatId) },

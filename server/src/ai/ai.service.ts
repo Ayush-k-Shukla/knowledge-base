@@ -28,7 +28,7 @@ export interface AnswerWithCitations {
 export class AiService {
   private readonly logger = new Logger(AiService.name);
   private genAI: GoogleGenerativeAI;
-  private cohere: CohereClientV2;
+  private cohere?: CohereClientV2;
   private embeddingCache = new Map<
     string,
     { embedding: number[]; timestamp: number }
@@ -82,7 +82,7 @@ export class AiService {
         });
         return persistent.embedding;
       }
-    } catch (e) {
+    } catch (e: any) {
       this.logger.warn(
         `Failed to check persistent embedding cache: ${e.message}`,
       );
@@ -129,6 +129,9 @@ export class AiService {
       input: text,
       embedding: finalEmbedding,
     });
+    this.logger.debug(
+      `[AI] Saved embedding for text (${text.substring(0, 50)}...)`,
+    );
 
     // Clean up memory cache
     if (this.embeddingCache.size > this.MAX_CACHE_SIZE) {
@@ -139,7 +142,6 @@ export class AiService {
   }
 
   private cleanEmbeddingCache(): void {
-    const now = Date.now();
     const entries = Array.from(this.embeddingCache.entries());
 
     // Sort by timestamp (oldest first) and remove oldest entries
@@ -157,6 +159,7 @@ export class AiService {
   }
 
   async rewriteQuery(query: string): Promise<QueryRewrite> {
+    this.logger.debug(`[AI] Rewriting query: "${query}"`);
     const model = this.genAI.getGenerativeModel({
       model: 'gemini-2.5-flash-lite',
     });
@@ -178,15 +181,22 @@ export class AiService {
     const response = result.response.text().trim();
 
     try {
-      const rewrittenQueries = JSON.parse(response);
-      if (!Array.isArray(rewrittenQueries) || rewrittenQueries.length !== 3) {
+      const parsedQueries = JSON.parse(response);
+      if (!Array.isArray(parsedQueries) || parsedQueries.length !== 3) {
         throw new Error('Invalid response format');
       }
+      const rewrittenQueries = parsedQueries.map((q) => q.toString());
+      this.logger.debug(
+        `[AI] Query rewrite produced ${rewrittenQueries.length} variations`,
+      );
       return {
         originalQuery: query,
-        rewrittenQueries: rewrittenQueries.map((q) => q.toString()),
+        rewrittenQueries,
       };
-    } catch (error) {
+    } catch (error: any) {
+      this.logger.warn(
+        `[AI] Query rewriting failed, using fallback variations: ${error.message}`,
+      );
       // Fallback to original query variations
       return {
         originalQuery: query,
@@ -200,12 +210,20 @@ export class AiService {
   }
 
   async rerankChunks(query: string, chunks: any[]): Promise<any[]> {
+    this.logger.debug(
+      `[AI] Reranking ${chunks?.length ?? 0} chunks for query: "${query}"`,
+    );
     if (!this.cohere) {
-      console.warn('Cohere client not initialized. Skipping reranking.');
+      this.logger.warn('Cohere client not initialized. Skipping reranking.');
       return chunks;
     }
 
-    if (!chunks || chunks.length === 0) return [];
+    if (!chunks || chunks.length === 0) {
+      this.logger.debug(
+        '[AI] No chunks to rerank. Returning empty result set.',
+      );
+      return [];
+    }
 
     const documents = chunks.map((chunk) => chunk.metadata?.text || '');
 
@@ -223,9 +241,12 @@ export class AiService {
         chunk.score = result.relevanceScore; // Set the new score from Cohere
         rerankedChunks.push(chunk);
       }
+      this.logger.debug(
+        `[AI] Cohere reranking completed. Returned ${rerankedChunks.length} chunks.`,
+      );
       return rerankedChunks;
     } catch (error) {
-      console.error('Cohere rerank error:', error);
+      this.logger.error('Cohere rerank error:', error);
       return chunks; // fallback to original order
     }
   }
@@ -251,6 +272,9 @@ export class AiService {
       )
       .join('\n\n---\n\n');
 
+    this.logger.debug(
+      `[AI] Generating answer with citations for question: "${question}" using ${contextChunks.length} context chunks`,
+    );
     const prompt = `
       You are a helpful assistant that answers questions based ONLY on the provided context.
       You must follow these rules strictly:
@@ -273,9 +297,15 @@ export class AiService {
 
     const result = await model.generateContent(prompt);
     const answer = result.response.text().trim();
+    this.logger.debug(
+      `[AI] Generated answer with ${answer.length} chars and ${contextChunks.length} context chunks`,
+    );
 
     // Extract citations from the answer
     const citations = this.extractCitationsFromAnswer(answer, contextChunks);
+    this.logger.debug(
+      `[AI] Extracted ${citations.length} citation(s) from answer`,
+    );
 
     return {
       answer,
@@ -423,9 +453,13 @@ export class AiService {
     const result = await model.generateContent(prompt);
     const responseText = result.response.text();
     try {
-      return JSON.parse(responseText);
-    } catch (e) {
-      console.error('Failed to parse evaluation JSON', e);
+      const evaluation = JSON.parse(responseText);
+      this.logger.debug(
+        `[AI] Context evaluation action=${evaluation.action} reasoning=${evaluation.reasoning}`,
+      );
+      return evaluation;
+    } catch (e: any) {
+      this.logger.error('Failed to parse evaluation JSON', e);
       return { action: 'ANSWER', reasoning: 'Fallback due to parse error' };
     }
   }
@@ -490,7 +524,7 @@ export class AiService {
       }
 
       return results;
-    } catch (error) {
+    } catch (error: any) {
       const searchTime = Date.now() - startTime;
       this.logger.error(
         `[Web Search Cache] Web search failed after ${searchTime}ms: ${error.message}`,
@@ -500,7 +534,6 @@ export class AiService {
   }
 
   private cleanWebSearchCache(): void {
-    const now = Date.now();
     const entries = Array.from(this.webSearchCache.entries());
 
     // Sort by timestamp (oldest first) and remove oldest entries
@@ -578,9 +611,13 @@ export class AiService {
       });
 
       const responseText = response.response.text();
-      return JSON.parse(responseText);
-    } catch (e) {
-      console.error('Failed to calculate confidence score', e);
+      const scoreResult = JSON.parse(responseText);
+      this.logger.debug(
+        `[AI] Confidence score calculated: ${scoreResult.score} (${scoreResult.reasoning})`,
+      );
+      return scoreResult;
+    } catch (e: any) {
+      this.logger.error('Failed to calculate confidence score', e);
       return {
         score: 50,
         reasoning:
@@ -609,13 +646,18 @@ export class AiService {
       Title:
     `;
 
+    this.logger.debug(
+      `[AI] Generating chat title for ${messages.length} messages`,
+    );
     try {
       const result = await model.generateContent(prompt);
       const title = result.response.text().trim();
       // Clean up the title, remove quotes if present
-      return title.replace(/^["']|["']$/g, '').substring(0, 50);
-    } catch (error) {
-      console.error('Failed to generate chat title:', error);
+      const cleaned = title.replace(/^["']|["']$/g, '').substring(0, 50);
+      this.logger.debug(`[AI] Generated chat title: "${cleaned}"`);
+      return cleaned;
+    } catch (error: any) {
+      this.logger.error('Failed to generate chat title:', error);
       return 'Chat Session';
     }
   }

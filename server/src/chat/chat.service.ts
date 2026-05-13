@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { SemanticCacheService } from 'src/ai/semantic-cache.service';
@@ -17,11 +22,14 @@ import {
   ChatSession,
   ChatSessionDocument,
 } from './schemas/chat-session.schema';
+import { Chunk, ChunkDocument } from './schemas/chunk.schema';
 import { Message, MessageDocument } from './schemas/message.schema';
 
 @Injectable()
-export class ChatService {
+export class ChatService implements OnModuleInit {
   private readonly logger = new Logger(ChatService.name);
+  private isAtlas = false;
+  private readonly CHUNK_SEARCH_INDEX = 'chunk_search_index';
 
   constructor(
     private aiService: AiService,
@@ -32,8 +40,58 @@ export class ChatService {
     @InjectModel(DocumentItem.name)
     private documentModel: Model<DocumentDocument>,
     @InjectModel(WebsiteItem.name) private websiteModel: Model<WebsiteDocument>,
+    @InjectModel(Chunk.name) private chunkModel: Model<ChunkDocument>,
     private semanticCache: SemanticCacheService,
-  ) {}
+  ) {
+    const connection = this.chunkModel.db;
+    const isAtlasUri =
+      (connection as any)._connectionString?.includes('mongodb.net') ||
+      (connection as any).host?.includes('mongodb.net');
+    this.isAtlas = !!isAtlasUri;
+  }
+
+  async onModuleInit() {
+    if (this.isAtlas) {
+      await this.ensureSearchIndex();
+    }
+  }
+
+  private async ensureSearchIndex() {
+    try {
+      const collection = this.chunkModel.collection;
+      const indexes = await (collection as any).listSearchIndexes().toArray();
+      const indexExists = indexes.some(
+        (idx: any) => idx.name === this.CHUNK_SEARCH_INDEX,
+      );
+
+      if (!indexExists) {
+        this.logger.log(
+          `Creating MongoDB Atlas Search Index "${this.CHUNK_SEARCH_INDEX}" for BM25...`,
+        );
+        await (collection as any).createSearchIndex({
+          name: this.CHUNK_SEARCH_INDEX,
+          definition: {
+            mappings: {
+              dynamic: false,
+              fields: {
+                text: {
+                  type: 'string',
+                  analyzer: 'lucene.standard',
+                },
+                chatId: {
+                  type: 'token',
+                },
+              },
+            },
+          },
+        });
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not automate Atlas Search Index creation: ${error.message}`,
+      );
+    }
+  }
 
   async createSession(userId: string): Promise<ChatSessionDocument> {
     return new this.chatSessionModel({
@@ -183,42 +241,184 @@ export class ChatService {
     rewrittenQueries: string[],
   ): Promise<any[]> {
     this.logger.debug(
-      `[Chat ${chatId}] Step 3: Running parallel vector search for ${rewrittenQueries.length} rewritten queries`,
+      `[Chat ${chatId}] Step 3: Running hybrid search for ${rewrittenQueries.length} rewritten queries`,
     );
     const retrievalStartTime = Date.now();
 
-    const searchResults = await Promise.all(
+    // 1. Parallel Vector Search (Pinecone)
+    const vectorSearchResults = await Promise.all(
       rewrittenQueries.map(async (rewrittenQuery) => {
         try {
           const embedding =
             await this.aiService.generateEmbedding(rewrittenQuery);
-          return await this.vectorService.query(embedding, 5, { chatId });
+          return await this.vectorService.query(embedding, 15, { chatId });
         } catch (error: any) {
           this.logger.warn(
-            `[Chat ${chatId}] Failed to process rewritten query "${rewrittenQuery}": ${error.message}`,
+            `[Chat ${chatId}] Vector search failed for query "${rewrittenQuery}": ${error.message}`,
           );
           return [];
         }
       }),
     );
 
-    const allMatches = searchResults.flat();
+    // 2. Parallel Keyword Search (MongoDB)
+    const keywordSearchResults = await Promise.all(
+      rewrittenQueries.map(async (rewrittenQuery) => {
+        try {
+          return await this.keywordSearch(chatId, rewrittenQuery, 15);
+        } catch (error: any) {
+          this.logger.warn(
+            `[Chat ${chatId}] Keyword search failed for query "${rewrittenQuery}": ${error.message}`,
+          );
+          return [];
+        }
+      }),
+    );
+
     const retrievalTime = Date.now() - retrievalStartTime;
-
     this.logger.debug(
-      `[Chat ${chatId}] Parallel retrieval completed in ${retrievalTime}ms. Total matches: ${allMatches.length} from ${searchResults.length} queries`,
+      `[Chat ${chatId}] Hybrid retrieval completed in ${retrievalTime}ms`,
     );
 
-    // 4. Merge and deduplicate results based on chunk ID
+    // 3. Combine results using Reciprocal Rank Fusion (RRF)
     this.logger.debug(
-      `[Chat ${chatId}] Step 4: Merging and deduplicating matches`,
+      `[Chat ${chatId}] Step 4: Applying Reciprocal Rank Fusion`,
     );
-    const uniqueMatches = this.mergeAndDeduplicateMatches(allMatches);
+    const fusedMatches = this.applyRRF(
+      vectorSearchResults.flat(),
+      keywordSearchResults.flat(),
+    );
 
     this.logger.debug(
-      `[Chat ${chatId}] Step 4.5: Re-ranking ${uniqueMatches.length} matches with Cohere`,
+      `[Chat ${chatId}] Step 4.5: Re-ranking ${fusedMatches.length} fused matches with Cohere`,
     );
-    return this.aiService.rerankChunks(question, uniqueMatches);
+    return this.aiService.rerankChunks(question, fusedMatches);
+  }
+
+  private async keywordSearch(
+    chatId: string,
+    query: string,
+    topK: number,
+  ): Promise<any[]> {
+    if (this.isAtlas) {
+      try {
+        const results = await this.chunkModel
+          .aggregate([
+            {
+              $search: {
+                index: this.CHUNK_SEARCH_INDEX,
+                compound: {
+                  must: [
+                    {
+                      text: {
+                        query: query,
+                        path: 'text',
+                      },
+                    },
+                  ],
+                  filter: [
+                    {
+                      equals: {
+                        value: toObjectId(chatId),
+                        path: 'chatId',
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+            {
+              $limit: topK,
+            },
+            {
+              $addFields: {
+                score: { $meta: 'searchScore' },
+              },
+            },
+          ])
+          .exec();
+
+        return results.map((res) => ({
+          id: `atlas-${res._id}`,
+          score: res.score,
+          metadata: {
+            text: res.text,
+            source: res.source,
+            chatId: res.chatId.toString(),
+            chunkIndex: res.chunkIndex,
+            ...res.metadata,
+          },
+        }));
+      } catch (error) {
+        this.logger.warn(
+          `Atlas Search failed, falling back to $text: ${error.message}`,
+        );
+      }
+    }
+
+    // Fallback to standard $text search (TF-IDF)
+    const results = await this.chunkModel
+      .find(
+        {
+          chatId: toObjectId(chatId),
+          $text: { $search: query },
+        },
+        {
+          score: { $meta: 'textScore' },
+        },
+      )
+      .sort({ score: { $meta: 'textScore' } })
+      .limit(topK)
+      .exec();
+
+    return results.map((res) => ({
+      id: `mongo-${res._id}`,
+      score: (res as any)._doc.score,
+      metadata: {
+        text: res.text,
+        source: res.source,
+        chatId: res.chatId.toString(),
+        chunkIndex: res.chunkIndex,
+        ...res.metadata,
+      },
+    }));
+  }
+
+  /**
+   * Reciprocal Rank Fusion (RRF) to combine results from multiple search methods.
+   * RRF score = sum(1 / (k + rank))
+   */
+  private applyRRF(
+    vectorMatches: any[],
+    keywordMatches: any[],
+    k: number = 60,
+  ): any[] {
+    const scoreMap = new Map<string, { match: any; score: number }>();
+
+    const updateScore = (matches: any[]) => {
+      matches.forEach((match, index) => {
+        const id =
+          match.id?.toString() ||
+          match._id?.toString() ||
+          match.metadata?.chunkId?.toString() ||
+          `${match.metadata?.source || 'unknown'}-${match.metadata?.chunkIndex ?? index}`;
+        const current = scoreMap.get(id) || { match, score: 0 };
+        // RRF Formula: 1 / (k + rank)
+        current.score += 1 / (k + index + 1);
+        scoreMap.set(id, current);
+      });
+    };
+
+    updateScore(vectorMatches);
+    updateScore(keywordMatches);
+
+    return Array.from(scoreMap.values())
+      .sort((a, b) => b.score - a.score)
+      .map((item) => ({
+        ...item.match,
+        rrfScore: item.score,
+      }))
+      .slice(0, 20); // Top 20 for re-ranking
   }
 
   private buildContextChunks(rerankedMatches: any[]): any[] {
@@ -413,6 +613,7 @@ export class ChatService {
       this.messageModel.deleteMany({ chatId: toObjectId(chatId) }).exec(),
       this.documentModel.deleteMany({ chatId: toObjectId(chatId) }).exec(),
       this.websiteModel.deleteMany({ chatId: toObjectId(chatId) }).exec(),
+      this.chunkModel.deleteMany({ chatId: toObjectId(chatId) }).exec(),
       this.vectorService.deleteByChatId(chatId),
     ]);
 

@@ -10,6 +10,7 @@ import {
 import { toObjectId } from '../utils/object-id.util';
 import { VectorService } from '../vector/vector.service';
 import { WebsiteDocument, WebsiteItem } from './schemas/website.schema';
+import { Chunk, ChunkDocument } from '../chat/schemas/chunk.schema';
 
 @Injectable()
 export class WebsiteService {
@@ -21,6 +22,7 @@ export class WebsiteService {
     @InjectModel(WebsiteItem.name) private websiteModel: Model<WebsiteDocument>,
     @InjectModel(ChatSession.name)
     private chatSessionModel: Model<ChatSessionDocument>,
+    @InjectModel(Chunk.name) private chunkModel: Model<ChunkDocument>,
   ) {}
 
   /**
@@ -114,6 +116,22 @@ export class WebsiteService {
         this.logger.debug(
           `[Website ${url}] Vector upsert completed in ${upsertTime}ms`,
         );
+
+        // Save chunks to MongoDB for keyword search
+        const mongoChunks = validChunks.map((chunk, i) => ({
+          chatId: toObjectId(chatId),
+          text: chunk,
+          source: url,
+          chunkIndex: i,
+          metadata: {
+            url,
+            startUrl,
+            chatId,
+            type: 'website',
+          },
+        }));
+
+        await this.chunkModel.insertMany(mongoChunks);
 
         pageCount++;
         this.logger.log(`Indexed page ${pageCount}: ${url}`);

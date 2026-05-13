@@ -18,8 +18,9 @@ export class SemanticCacheService implements OnModuleInit {
     // Check if we are connected to MongoDB Atlas
     // Accessing the connection string from the model's database connection
     const connection = this.cacheModel.db;
-    const isAtlasUri = (connection as any)._connectionString?.includes('mongodb.net') ||
-                       (connection as any).host?.includes('mongodb.net');
+    const isAtlasUri =
+      (connection as any)._connectionString?.includes('mongodb.net') ||
+      (connection as any).host?.includes('mongodb.net');
     this.isAtlas = !!isAtlasUri;
   }
 
@@ -27,7 +28,9 @@ export class SemanticCacheService implements OnModuleInit {
     if (this.isAtlas) {
       await this.ensureVectorIndex();
     } else {
-      this.logger.log('Local MongoDB detected. Skipping Atlas Vector Search index creation. Manual similarity fallback will be used.');
+      this.logger.log(
+        'Local MongoDB detected. Skipping Atlas Vector Search index creation. Manual similarity fallback will be used.',
+      );
     }
   }
 
@@ -42,7 +45,9 @@ export class SemanticCacheService implements OnModuleInit {
       const indexExists = indexes.some((idx: any) => idx.name === indexName);
 
       if (!indexExists) {
-        this.logger.log(`Creating MongoDB Atlas Vector Search Index "${indexName}"...`);
+        this.logger.log(
+          `Creating MongoDB Atlas Vector Search Index "${indexName}"...`,
+        );
         await (collection as any).createSearchIndex({
           name: indexName,
           type: 'vectorSearch',
@@ -65,9 +70,13 @@ export class SemanticCacheService implements OnModuleInit {
             ],
           },
         });
-        this.logger.log(`Atlas Vector Search Index "${indexName}" creation initiated.`);
+        this.logger.log(
+          `Atlas Vector Search Index "${indexName}" creation initiated.`,
+        );
       } else {
-        this.logger.debug(`Atlas Vector Search Index "${indexName}" already exists.`);
+        this.logger.debug(
+          `Atlas Vector Search Index "${indexName}" already exists.`,
+        );
       }
     } catch (error) {
       this.logger.warn(
@@ -87,7 +96,11 @@ export class SemanticCacheService implements OnModuleInit {
 
     try {
       if (!this.isAtlas) {
-        return this.findSimilarResponseManual(chatId, queryEmbedding, threshold);
+        return this.findSimilarResponseManual(
+          chatId,
+          queryEmbedding,
+          threshold,
+        );
       }
 
       // Use MongoDB Atlas Vector Search
@@ -203,7 +216,10 @@ export class SemanticCacheService implements OnModuleInit {
         .exec();
 
       for (const entry of entries) {
-        const similarity = this.cosineSimilarity(queryEmbedding, entry.embedding);
+        const similarity = this.cosineSimilarity(
+          queryEmbedding,
+          entry.embedding,
+        );
         if (similarity > threshold) {
           return entry.embedding;
         }
@@ -218,7 +234,9 @@ export class SemanticCacheService implements OnModuleInit {
   ): Promise<void> {
     try {
       if (data.embedding) {
-        this.logger.debug(`Saving entry with embedding dimension: ${data.embedding.length}`);
+        this.logger.debug(
+          `Saving entry with embedding dimension: ${data.embedding.length}`,
+        );
       }
       await new this.cacheModel(data).save();
     } catch (error) {

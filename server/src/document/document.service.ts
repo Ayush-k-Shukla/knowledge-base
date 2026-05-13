@@ -9,6 +9,7 @@ import {
 import { toObjectId } from '../utils/object-id.util';
 import { VectorService } from '../vector/vector.service';
 import { DocumentDocument, DocumentItem } from './schemas/document.schema';
+import { Chunk, ChunkDocument } from '../chat/schemas/chunk.schema';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const pdf = require('pdf-parse');
 
@@ -23,6 +24,7 @@ export class DocumentService {
     private documentModel: Model<DocumentDocument>,
     @InjectModel(ChatSession.name)
     private chatSessionModel: Model<ChatSessionDocument>,
+    @InjectModel(Chunk.name) private chunkModel: Model<ChunkDocument>,
   ) {}
 
   async processDocument(
@@ -93,6 +95,23 @@ export class DocumentService {
     this.logger.debug(
       `[Document ${file.originalname}] Vector upsert completed in ${upsertTime}ms`,
     );
+
+    // Save chunks to MongoDB for keyword search
+    this.logger.debug(
+      `[Document ${file.originalname}] Saving chunks to MongoDB for hybrid search`,
+    );
+    const mongoChunks = chunks.map((chunk, i) => ({
+      chatId: toObjectId(chatId),
+      text: chunk,
+      source: file.originalname,
+      chunkIndex: i,
+      metadata: {
+        filename: file.originalname,
+        chatId,
+      },
+    }));
+
+    await this.chunkModel.insertMany(mongoChunks);
 
     // Save metadata to MongoDB
     await this.documentModel.findOneAndUpdate(

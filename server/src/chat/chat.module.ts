@@ -11,6 +11,7 @@ import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { ChatSession, ChatSessionSchema } from './schemas/chat-session.schema';
 import { Message, MessageSchema } from './schemas/message.schema';
+import { Chunk, ChunkSchema } from './schemas/chunk.schema';
 
 import {
   SemanticCache,
@@ -25,6 +26,7 @@ import {
       { name: DocumentItem.name, schema: DocumentSchema },
       { name: WebsiteItem.name, schema: WebsiteSchema },
       { name: SemanticCache.name, schema: SemanticCacheSchema },
+      { name: Chunk.name, schema: ChunkSchema },
     ]),
     AiModule,
     VectorModule,

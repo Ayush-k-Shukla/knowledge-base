@@ -266,10 +266,7 @@ export class AiService {
 
     // Create context with chunk IDs for citation
     const contextWithIds = contextChunks
-      .map(
-        (chunk, index) =>
-          `[Index: ${index}] [Source: ${chunk.sourceId}:${chunk.id}]\n${chunk.text}`,
-      )
+      .map((chunk) => `[Source: ${chunk.sourceId}:${chunk.id}]\n${chunk.text}`)
       .join('\n\n---\n\n');
 
     this.logger.debug(
@@ -281,11 +278,12 @@ export class AiService {
 
       1. Answer ONLY using information from the provided context chunks.
       2. If the context doesn't contain enough information to answer the question, say "I don't have enough information in the provided context to answer this question."
-      3. Use inline citations in the format [source_id:chunk_id] immediately after each factual statement.
-      4. As a fallback, you may use [index] (e.g., [0], [1]) if the source_id:chunk_id is too long, but [source_id:chunk_id] is preferred.
-      5. Do not hallucinate or add information not present in the context.
-      6. Be concise but comprehensive.
-      7. If citing multiple sources for the same point, list them as [source1:chunk1][source2:chunk2] or [0][1].
+      3. Use inline citations in the exact format [source_id:chunk_id] immediately after each factual statement.
+      4. Do not use numeric index citations like [0] or [1]. Only [source_id:chunk_id] is allowed.
+      5. Do not invent source_id or chunk_id values. If you cannot cite a valid provided chunk, omit the citation.
+      6. Do not hallucinate or add information not present in the context.
+      7. Be concise but comprehensive.
+      8. If citing multiple sources for the same point, list them as [source1:chunk1][source2:chunk2].
 
       CONTEXT:
       ${contextWithIds}
@@ -296,24 +294,26 @@ export class AiService {
     `;
 
     const result = await model.generateContent(prompt);
-    const answer = result.response.text().trim();
+    const rawAnswer = result.response.text().trim();
     this.logger.debug(
-      `[AI] Generated answer with ${answer.length} chars and ${contextChunks.length} context chunks`,
+      `[AI] Generated answer with ${rawAnswer.length} chars and ${contextChunks.length} context chunks`,
     );
 
-    // Extract citations from the answer
-    const citations = this.extractCitationsFromAnswer(answer, contextChunks);
+    const { cleanedAnswer, citations } = this.validateAndCleanCitations(
+      rawAnswer,
+      contextChunks,
+    );
     this.logger.debug(
-      `[AI] Extracted ${citations.length} citation(s) from answer`,
+      `[AI] Extracted ${citations.length} verified citation(s) from answer`,
     );
 
     return {
-      answer,
+      answer: cleanedAnswer,
       citations,
     };
   }
 
-  private extractCitationsFromAnswer(
+  private validateAndCleanCitations(
     answer: string,
     contextChunks: Array<{
       id: string;
@@ -322,60 +322,80 @@ export class AiService {
       title?: string;
       metadata?: any;
     }>,
-  ): Citation[] {
-    // Matches [sourceId:chunkId] or [index]
-    const citationRegex = /\[(?:([^:\]\s]+):([^\]\s]+)|(\d+))\]/g;
+  ): { cleanedAnswer: string; citations: Citation[] } {
+    const citationRegex = /\[([^:\]\s]+):([^\]\s]+)\]/g;
     const citations: Citation[] = [];
     const processedCitations = new Set<string>();
+    const invalidCitations: Array<{ start: number; end: number }> = [];
+    const validCitationKeys = new Set(
+      contextChunks.map((chunk) => `${chunk.sourceId}:${chunk.id}`),
+    );
 
     let match;
     while ((match = citationRegex.exec(answer)) !== null) {
       const fullMatch = match[0];
       const sourceIdFromMatch = match[1]?.trim();
       const chunkIdFromMatch = match[2]?.trim();
-      const indexFromMatch = match[3];
+      const citationStart = match.index;
+      const citationEnd = citationStart + fullMatch.length;
 
-      let chunk;
-      let citationKey;
-
-      if (indexFromMatch !== undefined) {
-        // Numeric citation like [0]
-        const index = parseInt(indexFromMatch, 10);
-        chunk = contextChunks[index];
-        citationKey = `index:${index}`;
-      } else if (sourceIdFromMatch && chunkIdFromMatch) {
-        // Complex citation like [source:id]
-        chunk = contextChunks.find(
-          (c) => c.sourceId === sourceIdFromMatch && c.id === chunkIdFromMatch,
-        );
-        citationKey = `${sourceIdFromMatch}:${chunkIdFromMatch}`;
+      if (!sourceIdFromMatch || !chunkIdFromMatch) {
+        invalidCitations.push({ start: citationStart, end: citationEnd });
+        continue;
       }
 
-      if (chunk && citationKey && !processedCitations.has(citationKey)) {
-        processedCitations.add(citationKey);
-
-        // Extract 1-2 relevant sentences from the chunk
-        const relevantSentences = this.extractRelevantSentences(
-          chunk.text,
-          answer,
-        );
-
-        citations.push({
-          sourceId:
-            chunk.metadata?.source ||
-            chunk.metadata?.sourceId ||
-            chunk.metadata?.documentId ||
-            chunk.sourceId,
-          chunkId: chunk.id,
-          text: chunk.text,
-          title: chunk.metadata?.title || chunk.metadata?.source || chunk.title,
-          relevantSentences,
-          originalMatch: fullMatch,
-        });
+      const citationKey = `${sourceIdFromMatch}:${chunkIdFromMatch}`;
+      if (!validCitationKeys.has(citationKey)) {
+        invalidCitations.push({ start: citationStart, end: citationEnd });
+        continue;
       }
+
+      if (processedCitations.has(citationKey)) {
+        continue;
+      }
+
+      processedCitations.add(citationKey);
+      const chunk = contextChunks.find(
+        (c) => `${c.sourceId}:${c.id}` === citationKey,
+      );
+      if (!chunk) {
+        invalidCitations.push({ start: citationStart, end: citationEnd });
+        continue;
+      }
+
+      const relevantSentences = this.extractRelevantSentences(
+        chunk.text,
+        answer,
+      );
+      citations.push({
+        sourceId:
+          chunk.metadata?.source ||
+          chunk.metadata?.sourceId ||
+          chunk.metadata?.documentId ||
+          chunk.sourceId,
+        chunkId: chunk.id,
+        text: chunk.text,
+        title: chunk.metadata?.title || chunk.metadata?.source || chunk.title,
+        relevantSentences,
+        originalMatch: fullMatch,
+      });
     }
 
-    return citations;
+    let cleanedAnswer = answer;
+    if (invalidCitations.length > 0) {
+      this.logger.warn(
+        `[AI] Removed ${invalidCitations.length} invalid or fabricated citation(s) from generated answer`,
+      );
+      invalidCitations.sort((a, b) => b.start - a.start);
+      for (const invalid of invalidCitations) {
+        cleanedAnswer =
+          cleanedAnswer.slice(0, invalid.start) +
+          cleanedAnswer.slice(invalid.end);
+      }
+      cleanedAnswer = cleanedAnswer.replace(/\s{2,}/g, ' ').trim();
+    }
+
+    return { cleanedAnswer, citations };
   }
 
   private extractRelevantSentences(

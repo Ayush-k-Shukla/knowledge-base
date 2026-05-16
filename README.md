@@ -48,18 +48,37 @@ flowchart TD
     API --> ChatSvc[Chat Service]
     API --> DocSvc[Document Service]
     API --> WebSvc[Website Service]
-    AuthSvc --> Mongo[MongoDB]
+
+    %% Persistence
+    Mongo[MongoDB (chunks, docs, websites, semantic cache)]
+
+    %% Vector and AI
+    VecSvc[Vector Service]
+    Pinecone[Pinecone]
+    AiSvc[AI Service]
+    LLM[Google Gemini / Cohere]
+    CacheSvc[Semantic Cache Service (Atlas Vector Search or Mongo)]
+
+    AuthSvc --> Mongo
     ChatSvc --> Mongo
     DocSvc --> Mongo
     WebSvc --> Mongo
-    DocSvc --> VecSvc[Vector Service]
+
+    %% Hybrid retrieval paths
+    DocSvc --> VecSvc
     WebSvc --> VecSvc
-    ChatSvc --> AiSvc[AI Service]
-    ChatSvc --> CacheSvc[Semantic Cache Service]
+    DocSvc --> Mongo
+    WebSvc --> Mongo
+
+    ChatSvc --> VecSvc
+    ChatSvc --> Mongo
+    ChatSvc --> AiSvc
+    ChatSvc --> CacheSvc
+
     AiSvc --> CacheSvc
     CacheSvc --> Mongo
-    AiSvc -->|Embeddings / generation| LLM[Google Gemini / Cohere]
-    VecSvc -->|upsert/query| Pinecone
+    AiSvc -->|Embeddings / generation| LLM
+    VecSvc -->|upsert / query| Pinecone
   end
 
   Client -->|CORS / HTTP| Server
@@ -71,45 +90,46 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[User uploads file<br>or indexes website] --> B{Type?}
-    B -->|Document| C[Extract text<br>from PDF/TXT]
-    B -->|Website| D[Crawl website<br>pages]
-    C --> E[Chunk text<br>into segments]
-    D --> E
-    E --> F[Generate embeddings<br>for each chunk]
-    F --> G[Upsert vectors<br>to Pinecone]
-    G --> H[Save metadata<br>to MongoDB]
-    H --> I[Indexing complete]
+  A[User uploads file<br>or indexes website] --> B{Type?}
+  B -->|Document| C[Extract text<br>from PDF/TXT]
+  B -->|Website| D[Crawl website<br>pages]
+  C --> E[Chunk text<br>into segments]
+  D --> E
+  E --> F[Generate embeddings<br>for each chunk (parallel)]
+  F --> G[Batch upsert vectors<br>to Pinecone]
+  G --> H[Save chunks & metadata<br>to MongoDB (for keyword search / Atlas Search)]
+  H --> I[Indexing complete]
 ```
 
 ### Question Answering Flow
 
 ```mermaid
 flowchart TD
-    A[User asks question] --> B[Save question<br>to MongoDB]
-    B --> C[Generate embedding<br>for question]
-    C --> D[Check Semantic Cache<br>for similar question]
-    D --> E{Cache Hit?}
-    E -->|Yes| F[Return cached<br>answer]
-    E -->|No| G[Rewrite query<br>into 3 versions]
-    G --> H[For each rewritten<br>query:]
-    H --> I[Generate embedding]
-    I --> J[Query Pinecone<br>for top matches]
-    J --> K[Merge and<br>deduplicate results]
-    K --> L[Rerank matches<br>with Cohere]
-    L --> M[Evaluate context<br>sufficiency]
-    M --> N{Action?}
-    N -->|Clarify| O[Ask for<br>clarification]
-    N -->|Web Search| P[Perform web search,<br>append results]
-    N -->|Proceed| Q[Generate answer<br>with citations]
-    O --> R[Return clarification<br>message]
-    P --> Q
-    Q --> S[Format answer with<br>citations and snippets]
-    S --> T[Calculate confidence<br>score]
-    T --> U[Save answer to MongoDB<br>and cache result]
-    U --> V[Return answer<br>to user]
-    F --> V
-    R --> V
+  A[User asks question] --> B[Save question<br>to MongoDB (user message)]
+  B --> C[Generate embedding<br>for question]
+  C --> D[Check Semantic Cache<br>for similar question]
+  D --> E{Cache Hit?}
+  E -->|Yes| F[Return cached answer<br>and save bot message]
+  E -->|No| G[Rewrite query<br>into 3 variations]
+  G --> H[For each rewritten<br>query (parallel):]
+  H --> I[Generate embedding]
+  I --> J[Query Pinecone (vector)<br>and Mongo keyword search]
+  J --> K[Combine results and apply<br>Reciprocal Rank Fusion (RRF)]
+  K --> L[De-duplicate & limit results]
+  L --> M[Rerank matches with Cohere]
+  M --> N[Build context chunks<br>from top matches]
+  N --> O[Evaluate context sufficiency<br>(Agentic Routing)]
+  O --> P{Action?}
+  P -->|ASK_CLARIFICATION| Q[Ask for clarification<br>and return message]
+  P -->|WEB_SEARCH| R[Perform web search,<br>append synthetic web chunks]
+  P -->|ANSWER| S[Proceed to generate answer<br>with citations]
+  R --> S
+  S --> T[Format answer with<br>citations and snippets]
+  T --> U[Calculate confidence score]
+  U --> V[Save answer to MongoDB<br>and semantic cache (response)]
+  V --> W[Return answer to user]
+  F --> W
+  Q --> W
 ```
 
 ### Backend

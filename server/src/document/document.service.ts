@@ -6,10 +6,10 @@ import {
   ChatSession,
   ChatSessionDocument,
 } from '../chat/schemas/chat-session.schema';
+import { Chunk, ChunkDocument } from '../chat/schemas/chunk.schema';
 import { toObjectId } from '../utils/object-id.util';
 import { VectorService } from '../vector/vector.service';
 import { DocumentDocument, DocumentItem } from './schemas/document.schema';
-import { Chunk, ChunkDocument } from '../chat/schemas/chunk.schema';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const pdf = require('pdf-parse');
 
@@ -32,7 +32,9 @@ export class DocumentService {
     file: Express.Multer.File,
     userId: string,
   ): Promise<void> {
-    this.logger.log(`[Document] Processing upload ${file.originalname} for chatId=${chatId} userId=${userId}`);
+    this.logger.log(
+      `[Document] Processing upload ${file.originalname} for chatId=${chatId} userId=${userId}`,
+    );
     await this.ensureOwnership(chatId, userId);
     this.logger.debug(`[Document] Ownership verified for chatId=${chatId}`);
 
@@ -128,21 +130,30 @@ export class DocumentService {
       },
       { upsert: true, new: true },
     );
-    this.logger.log(`[Document] Completed processing ${file.originalname} for chatId=${chatId}`);
+    this.logger.log(
+      `[Document] Completed processing ${file.originalname} for chatId=${chatId}`,
+    );
   }
 
   async findAll(chatId: string, userId: string): Promise<DocumentItem[]> {
-    this.logger.debug(`[Document] Retrieving documents for chatId=${chatId} userId=${userId}`);
+    this.logger.debug(
+      `[Document] Retrieving documents for chatId=${chatId} userId=${userId}`,
+    );
     await this.ensureOwnership(chatId, userId);
     const documents = await this.documentModel
       .find({ chatId: toObjectId(chatId) })
       .sort({ uploadedAt: -1 })
       .exec();
-    this.logger.debug(`[Document] Retrieved ${documents.length} documents for chatId=${chatId}`);
+    this.logger.debug(
+      `[Document] Retrieved ${documents.length} documents for chatId=${chatId}`,
+    );
     return documents;
+  }
 
   private async ensureOwnership(chatId: string, userId: string) {
-    this.logger.debug(`[Document] Verifying ownership chatId=${chatId} userId=${userId}`);
+    this.logger.debug(
+      `[Document] Verifying ownership chatId=${chatId} userId=${userId}`,
+    );
     const session = await this.chatSessionModel.findOne({
       _id: toObjectId(chatId),
       userId: toObjectId(userId),

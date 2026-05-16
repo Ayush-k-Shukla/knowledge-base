@@ -84,7 +84,7 @@ flowchart TD
 
 ### Question Answering Flow
 
-````mermaid
+```mermaid
 flowchart TD
     A[User asks question] --> B[Save question<br>to MongoDB]
     B --> C[Generate embedding<br>for question]
@@ -110,20 +110,20 @@ flowchart TD
     U --> V[Return answer<br>to user]
     F --> V
     R --> V
+```
 
 ### Backend
 
 1. Open a terminal and go to the `server` directory:
 
-```bash
+````bash
 cd server
-````
 
 2. Install dependencies:
 
 ```bash
 npm install
-```
+````
 
 3. Create a `.env` file with at least these values:
 

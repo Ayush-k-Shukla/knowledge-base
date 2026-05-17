@@ -50,14 +50,14 @@ flowchart TD
     API --> WebSvc[Website Service]
 
     %% Persistence
-    Mongo[MongoDB (chunks, docs, websites, semantic cache)]
+    Mongo[MongoDB]
 
     %% Vector and AI
     VecSvc[Vector Service]
     Pinecone[Pinecone]
     AiSvc[AI Service]
     LLM[Google Gemini / Cohere]
-    CacheSvc[Semantic Cache Service (Atlas Vector Search or Mongo)]
+    CacheSvc[Semantic Cache Service]
 
     AuthSvc --> Mongo
     ChatSvc --> Mongo
@@ -95,9 +95,9 @@ flowchart TD
   B -->|Website| D[Crawl website<br>pages]
   C --> E[Chunk text<br>into segments]
   D --> E
-  E --> F[Generate embeddings<br>for each chunk (parallel)]
+  E --> F[Generate embeddings<br>for each chunk]
   F --> G[Batch upsert vectors<br>to Pinecone]
-  G --> H[Save chunks & metadata<br>to MongoDB (for keyword search / Atlas Search)]
+  G --> H[Save chunks & metadata<br>to MongoDB]
   H --> I[Indexing complete]
 ```
 
@@ -105,20 +105,20 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  A[User asks question] --> B[Save question<br>to MongoDB (user message)]
+  A[User asks question] --> B[Save question<br>to MongoDB ]
   B --> C[Generate embedding<br>for question]
   C --> D[Check Semantic Cache<br>for similar question]
   D --> E{Cache Hit?}
   E -->|Yes| F[Return cached answer<br>and save bot message]
   E -->|No| G[Rewrite query<br>into 3 variations]
-  G --> H[For each rewritten<br>query (parallel):]
+  G --> H[For each rewritten<br>query]
   H --> I[Generate embedding]
-  I --> J[Query Pinecone (vector)<br>and Mongo keyword search]
-  J --> K[Combine results and apply<br>Reciprocal Rank Fusion (RRF)]
+  I --> J[Query Pinecone <br>and Mongo keyword search]
+  J --> K[Combine results and apply<br>Reciprocal Rank Fusion]
   K --> L[De-duplicate & limit results]
   L --> M[Rerank matches with Cohere]
   M --> N[Build context chunks<br>from top matches]
-  N --> O[Evaluate context sufficiency<br>(Agentic Routing)]
+  N --> O[Evaluate context sufficiency<br> - Agentic Routing]
   O --> P{Action?}
   P -->|ASK_CLARIFICATION| Q[Ask for clarification<br>and return message]
   P -->|WEB_SEARCH| R[Perform web search,<br>append synthetic web chunks]
@@ -126,7 +126,7 @@ flowchart TD
   R --> S
   S --> T[Format answer with<br>citations and snippets]
   T --> U[Calculate confidence score]
-  U --> V[Save answer to MongoDB<br>and semantic cache (response)]
+  U --> V[Save answer to MongoDB<br>and semantic cache]
   V --> W[Return answer to user]
   F --> W
   Q --> W

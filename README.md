@@ -132,6 +132,98 @@ flowchart TD
   Q --> W
 ```
 
+### Unified All-in-One Flow
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 User
+    participant Frontend as 🌐 Frontend
+    participant AuthCtrl as 🔐 Auth<br/>Controller
+    participant DocCtrl as 📄 Document<br/>Controller
+    participant WebCtrl as 🌍 Website<br/>Controller
+    participant ChatCtrl as 💬 Chat<br/>Controller
+    participant AuthSvc as 🔐 Auth<br/>Service
+    participant DocSvc as 📄 Document<br/>Service
+    participant WebSvc as 🌍 Website<br/>Service
+    participant ChatSvc as 💬 Chat<br/>Service
+    participant Cache as ⚡ Semantic<br/>Cache
+    participant VectorSvc as 🗺️ Vector<br/>Service
+    participant AISvc as 🤖 AI<br/>Service
+    participant LLM as 🤖 Gemini<br/>LLM
+    participant MongoDB as 💾 MongoDB
+    participant Pinecone as 📌 Pinecone
+    participant DuckDuckGo as 🌍 DuckDuckGo<br/>API
+
+    User->>Frontend: Login / upload / ask
+    Frontend->>AuthCtrl: POST /auth/login
+    AuthCtrl->>AuthSvc: validateUser()
+    AuthSvc->>MongoDB: find user
+    MongoDB-->>AuthSvc: user record
+    AuthSvc-->>AuthCtrl: JWT
+
+    alt Content indexing
+        User->>Frontend: Upload file or URL
+        Frontend->>DocCtrl: POST /document/upload
+        DocCtrl->>DocSvc: uploadDocument()
+        DocSvc->>DocSvc: parse text, chunk content
+        DocSvc->>Cache: getEmbedding(chunk)
+        Cache->>Cache: L1/L2/L3 lookup
+        alt cache miss
+            Cache->>LLM: generateEmbedding(text)
+            LLM-->>Cache: embedding
+            Cache->>MongoDB: save semantic cache
+        end
+        DocSvc->>VectorSvc: batchUpsert(chunks)
+        VectorSvc->>Pinecone: upsert vectors
+        VectorSvc-->>DocSvc: indexed
+        DocSvc->>MongoDB: save chunks and metadata
+        DocSvc-->>Frontend: indexing complete
+    else Website crawl
+        User->>Frontend: POST /website/index
+        Frontend->>WebCtrl: indexWebsite(url)
+        WebCtrl->>WebSvc: crawl + chunk pages
+        WebSvc->>Cache: getEmbedding(page chunk)
+        note right of WebSvc: reuse embedding + cache flow
+        WebSvc->>VectorSvc: batchUpsert(chunks)
+        VectorSvc->>Pinecone: upsert vectors
+        VectorSvc-->>WebSvc: indexed
+        WebSvc->>MongoDB: save pages and metadata
+        WebSvc-->>Frontend: website indexed
+    end
+
+    User->>Frontend: Ask question
+    Frontend->>ChatCtrl: POST /chat/ask
+    ChatCtrl->>ChatSvc: askQuestion()
+    ChatSvc->>Cache: getEmbedding(question)
+    Cache->>Cache: L1/L2/L3 lookup
+    alt semantic cache hit
+        Cache-->>ChatSvc: cached answer
+        ChatSvc->>MongoDB: save user + bot history
+    else full retrieval
+        ChatSvc->>VectorSvc: rewriteQuery(question)
+        VectorSvc->>Pinecone: query original + variants
+        VectorSvc->>MongoDB: keyword search
+        VectorSvc->>VectorSvc: fuse + dedupe results
+        VectorSvc->>LLM: rerank chunks
+        LLM-->>VectorSvc: top ranked context
+        VectorSvc-->>ChatSvc: context chunks
+        ChatSvc->>AISvc: evaluateContext(question, chunks)
+        alt need web search fallback
+            AISvc->>DuckDuckGo: search(query)
+            DuckDuckGo-->>AISvc: results
+            AISvc->>LLM: embed & synthesize web context
+        end
+        ChatSvc->>AISvc: generateAnswer(question, context)
+        AISvc->>LLM: answer prompt
+        LLM-->>AISvc: answer
+        AISvc->>MongoDB: save chat + cache answer
+    end
+
+    ChatSvc-->>ChatCtrl: response
+    ChatCtrl-->>Frontend: 200 answer
+    Frontend-->>User: ✅ Answer displayed
+```
+
 ### Backend
 
 1. Open a terminal and go to the `server` directory:

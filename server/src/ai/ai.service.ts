@@ -105,7 +105,7 @@ export class AiService {
 
     // 4. Check for semantic match (if we have a close enough match, we could use that instead,
     // but usually with embeddings we want the exact one.
-    // However, the user asked for semantic cache for embeddings too)
+    // However, this is done in order for not storing 2 very similar embeddings)
     const similarEmbedding = await this.semanticCache.findSimilarEmbedding(
       text,
       embedding,
